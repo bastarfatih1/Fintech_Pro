@@ -3,6 +3,7 @@ requests
 pandas
 numpy
 yfinance
-scikit-learn==1.3.2
-xgboost==1.7.6
+scikit-learn
 statsmodels
+pyarrow
+xgboost==2.0.3
