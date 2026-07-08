@@ -67,12 +67,46 @@ def canli_rss_haber_cek(arama_kelimesi):
 
 def ai_etki_analizi(haber_basligi, enstruman_ismi):
     try:
+        from ollama import Client
         client = Client(host='http://localhost:11434')
-        # Modele bir "rol" vermek cevapların kalitesini çok artırır
-        prompt = f"Sen profesyonel bir finansal analistsin. Şu haberin: '{haber_basligi}' -> {enstruman_ismi} fiyatlarına olası etkisini çok kısa ve net tek bir cümleyle özetle."
+        
+        # Yapay zekayı spesifik bir formata zorluyoruz
+        prompt = f"""Sen profesyonel bir kantitatif analistsin. Şu haberin: '{haber_basligi}' -> {enstruman_ismi} fiyatlarına olası etkisini analiz et.
+        LÜTFEN SADECE AŞAĞIDAKİ FORMATTA YANIT VER (Başka hiçbir açıklama ekleme):
+        ETKİ YÖNÜ (POZİTİF, NEGATİF veya NÖTR) | ETKİ YÜZDESİ (Sadece rakam, örn: 2.5) | 1 CÜMLELİK ÖZET
+        Örnek: POZİTİF | 1.5 | Şirketin yeni yatırımı büyüme beklentilerini artırdı."""
         
         response = client.generate(model='gemma2:2b', prompt=prompt)
-        return response.get('response', 'Analiz tamamlanamadı.').strip()
+        return response.get('response', 'NÖTR | 0.0 | Analiz tamamlanamadı.').strip()
     except Exception as e:
-        print(f"[Yapay Zeka Hatası] Etki analizi başarısız: {e}")
-        return "Yapay zeka sunucusuna ulaşılamadı (Ollama uygulamasının açık olduğundan emin ol)."
+        print(f"[AI Hatası]: {e}")
+        return "NÖTR | 0.0 | AI motoruna ulaşılamadı."
+def ai_teknik_analiz_yorumu(enstruman_ismi, anlik_fiyat, boga_fiyat, ayi_fiyat):
+    try:
+        from ollama import Client
+        client = Client(host='http://localhost:11434')
+        
+        prompt = f"""Sen Wall Street seviyesinde profesyonel bir teknik analistsin. 
+        {enstruman_ismi} şu an {anlik_fiyat} seviyesinden işlem görüyor. 
+        Yapay zeka ve kantitatif algoritmalarımız bu varlık için önümüzdeki dönemde iyimser (boğa) hedefi {boga_fiyat:.2f}, kötümser (ayı) destek seviyesini ise {ayi_fiyat:.2f} olarak belirledi.
+        Lütfen yatırımcılara bu durumu özetleyen, 2-3 cümlelik çok profesyonel ve teknik bir piyasa yorumu yap. Sadece yorum metnini ver, başlık vs. kullanma."""
+        
+        response = client.generate(model='gemma2:2b', prompt=prompt)
+        return response.get('response', 'Teknik analiz şu an gerçekleştirilemiyor.').strip()
+    except Exception as e:
+        print(f"[AI Teknik Hata]: {e}")
+        return "🤖 AI Yorum Motoru Çevrimdışı: Teknik analiz bağlantısı kurulamadı."
+def ai_model_yorumu(model_adi, enstruman_ismi, anlik_fiyat, hedef_fiyat, vade):
+    try:
+        from ollama import Client
+        client = Client(host='http://localhost:11434')
+        
+        prompt = f"""Sen profesyonel bir kantitatif analistsin.
+        {enstruman_ismi} şu an {anlik_fiyat:.2f} seviyesinde. Bizim '{model_adi}' isimli algoritmamız, {vade} sonra fiyatın {hedef_fiyat:.2f} olacağını öngörüyor.
+        Lütfen bu {model_adi} modelinin bu varlık için yaptığı öngörüyü yatırımcıya yorumla. 
+        SADECE 2 cümlelik, çok teknik ve profesyonel bir açıklama yaz. Başlık veya giriş kullanma."""
+        
+        response = client.generate(model='gemma2:2b', prompt=prompt)
+        return response.get('response', 'Analiz yapılamadı.').strip()
+    except Exception as e:
+        return "🤖 AI Yorum Motoru Çevrimdışı: Bağlantı kurulamadı."    
