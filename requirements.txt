@@ -8,12 +8,4 @@ statsmodels
 pyarrow
 xgboost==2.0.3
 ollama
-streamlit
-pandas
-numpy
-requests
 plotly
-yfinance
-scikit-learn
-statsmodels
-ollama
