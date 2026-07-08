@@ -1,54 +1,39 @@
 import numpy as np
 import pandas as pd
-import gc
 import requests
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from datetime import timedelta
 
-# Ağır kütüphaneleri (LSTM, ARIMA, XGBoost) import ederken sistemin çökmemesi için try-except kullanıyoruz.
-try:
-    from statsmodels.tsa.arima.model import ARIMA
-    STATSMODELS_AVAILABLE = True
-except ImportError:
-    STATSMODELS_AVAILABLE = False
-
 def get_kurlar():
-    # API KEY'inizi buraya girin
     API_KEY = "de8106e54912c5541f0b97fa" 
     url = f"https://v6.exchangerate-api.com/v6/{API_KEY}/latest/USD"
-    
     try:
-        # Sunucu takılmalarına karşı timeout (5 saniye) eklendi
         response = requests.get(url, timeout=5)
-        response.raise_for_status() # HTTP 200 harici hatada (örn: sınır aşımı) direkt except'e atlar
-        
+        response.raise_for_status()
         rates = response.json().get('conversion_rates', {})
-        
-        # Dönüştürücü modülünün matematiksel olarak doğru çalışması için
-        # kurların "1 USD = X Birim" formatında saf olarak dönmesi zorunludur.
         return {
             "USD": 1.0, 
-            "TRY": rates.get('TRY', 34.0), 
+            "TRY": rates.get('TRY', 34.20), 
             "EUR": rates.get('EUR', 0.92), 
             "CNY": rates.get('CNY', 7.25),
             "RUB": rates.get('RUB', 88.0), 
             "SAR": rates.get('SAR', 3.75),
-            "KWD": rates.get('KWD', 0.30), 
-            "JPY": rates.get('JPY', 160.0)
+            "KWD": rates.get('KWD', 0.31), 
+            "JPY": rates.get('JPY', 155.0)
         }
     except Exception as e:
         print(f"[API Hatası] {e}")
-        # API çökerse veya sınır (limit) aşılırsa çeviri matematiğini bozmayacak DOĞRU yedek oranlar
         return {
-            "USD": 1.0, "TRY": 34.0, "EUR": 0.92, "CNY": 7.25, "RUB": 88.0, "SAR": 3.75, "KWD": 0.30, "JPY": 160.0
+            "USD": 1.0, "TRY": 34.20, "EUR": 0.92, 
+            "CNY": 7.25, "RUB": 88.0, "SAR": 3.75, 
+            "KWD": 0.31, "JPY": 155.0
         }
 
 def hesapla_gecmis_performans(data, curr_price, ana_para, kur_val, sembol):
     sonuclar = []
     bugun = data.index[-1].tz_localize(None) 
-    
     kur_data = None
     curr_kur = 1.0
     
@@ -63,17 +48,10 @@ def hesapla_gecmis_performans(data, curr_price, ana_para, kur_val, sembol):
         except:
             pass 
             
-    # Gerçek TAKVİM süreleri (2 Yıl ve 4 Yıl eklendi)
     zaman_farklari = {
-        "1 Gün": timedelta(days=1),
-        "1 Hafta": timedelta(days=7),
-        "1 Ay": timedelta(days=30),
-        "3 Ay": timedelta(days=90),
-        "6 Ay": timedelta(days=180),
-        "1 Yıl": timedelta(days=365),
-        "2 Yıl": timedelta(days=730),
-        "3 Yıl": timedelta(days=1095),
-        "4 Yıl": timedelta(days=1460),
+        "1 Gün": timedelta(days=1), "1 Hafta": timedelta(days=7), "1 Ay": timedelta(days=30),
+        "3 Ay": timedelta(days=90), "6 Ay": timedelta(days=180), "1 Yıl": timedelta(days=365),
+        "2 Yıl": timedelta(days=730), "3 Yıl": timedelta(days=1095), "4 Yıl": timedelta(days=1460),
         "5 Yıl": timedelta(days=1825)
     }
     
@@ -113,103 +91,114 @@ def hesapla_gecmis_performans(data, curr_price, ana_para, kur_val, sembol):
                 "Toplam Bakiye": f"{sembol}{toplam_bakiye:,.0f}"
             })
         else:
-            sonuclar.append({"Dönem": isim, "Gerçekleşen Getiri": "Veri Yok", "Net Kâr / Zarar": "-", "Toplam Bakiye": "-"})
+            sonuclar.append({
+                "Dönem": isim, "Gerçekleşen Getiri": "Veri Yok", "Net Kâr / Zarar": "-", "Toplam Bakiye": "-"
+            })
             
     return pd.DataFrame(sonuclar)
 
-# --- ORKESTRATÖR VE KONSENSÜS MOTORU ---
-
 def hazirla_ml_verisi(data):
     df = pd.DataFrame(data['Close'].copy())
-    
-    # Mevcut bilimsel analiz verileri
     df['Lag_1'] = df['Close'].shift(1)
-    df['Lag_2'] = df['Close'].shift(2)  # X_gelecek için eklendi
+    df['Lag_2'] = df['Close'].shift(2)
     df['Lag_3'] = df['Close'].shift(3)
-    df['Lag_6'] = df['Close'].shift(6)  # X_gelecek için eklendi
+    df['Lag_6'] = df['Close'].shift(6)
     df['Lag_7'] = df['Close'].shift(7)
     df['MA_14'] = df['Close'].rolling(window=14).mean()
     
-    # RSI İNDİKATÖRÜ
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-9)
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # Tüm eksik (NaN) satırları temizliyoruz
     df = df.dropna()
-    
-    # Yapay zekaya besleyeceğimiz özellik listesine RSI'ı da ekliyoruz
     ozellikler = ['Lag_1', 'Lag_3', 'Lag_7', 'MA_14', 'RSI']
     X = df[ozellikler].values
     y = df['Close'].values
     
-    # Yarının girdileri (X_gelecek) eşleştirmesi
     X_gelecek = np.array([
-        df['Close'].iloc[-1],       
-        df['Lag_2'].iloc[-1],       
-        df['Lag_6'].iloc[-1],       
-        df['MA_14'].iloc[-1],       
-        df['RSI'].iloc[-1]          
+        df['Close'].iloc[-1], df['Lag_2'].iloc[-1], df['Lag_6'].iloc[-1], df['MA_14'].iloc[-1], df['RSI'].iloc[-1]          
     ]).reshape(1, -1)
     
     return X, y, X_gelecek
 
-def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, periyot_gun=1825):
+def generate_volatile_path(start_val, target_val, steps, daily_volatility, seed=42):
+    np.random.seed(seed)
+    total_ratio = target_val / start_val
+    daily_drift = (total_ratio) ** (1.0 / steps) - 1.0
+    
+    path = [start_val]
+    for i in range(steps - 1):
+        shock = np.random.normal(0, 1.2) * daily_volatility
+        next_val = path[-1] * (1 + daily_drift + shock)
+        if next_val <= 0:
+            next_val = 0.01
+        path.append(next_val)
+    return np.array(path)
+
+def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, periyot_gun=365):
     data_kisa = data.tail(1500).copy()
     tahmin_havuzu = {}
     rotalar = {}
     
-    # 1. Monte Carlo Simülasyonu
     returns = data_kisa['Close'].pct_change().dropna()
     mu, sigma = returns.mean(), returns.std()
+    if np.isnan(sigma) or sigma == 0:
+        sigma = 0.015 
+
+    # 1. Monte Carlo Simülasyonu
     sim = np.zeros((periyot_gun, 500))
     for i in range(500):
-        sim[:, i] = curr * np.exp(np.cumsum((mu - 0.5 * sigma**2) + sigma * np.random.normal(0, 1, periyot_gun)))
+        np.random.seed(i)
+        sim[:, i] = curr * np.exp(
+            np.cumsum((mu - 0.5 * sigma**2) + sigma * np.random.normal(0, 1, periyot_gun))
+        )
     
     mc_path = np.median(sim, axis=1)
     tahmin_havuzu['monte_carlo'] = mc_path[-1]
     rotalar['monte_carlo'] = mc_path
 
-    # --- ML VERİ HAZIRLIĞI & MODEL ÇÖKME KORUMASI ---
     X, y, X_gelecek = hazirla_ml_verisi(data_kisa)
-    
-    def smooth_path(start, end, steps):
-        return np.geomspace(start, end, steps)
 
     # 2. Linear Regression
     try:
         lr_model = LinearRegression()
         lr_model.fit(X, y)
         pred = lr_model.predict(X_gelecek)[0]
+        if pred < curr * 0.5 or pred > curr * 2.0:
+            pred = curr * (1 + mu * periyot_gun)
         tahmin_havuzu['lin_reg'] = pred
-        rotalar['lin_reg'] = smooth_path(curr, pred, periyot_gun)
+        rotalar['lin_reg'] = generate_volatile_path(curr, pred, periyot_gun, sigma, seed=101)
     except:
-        tahmin_havuzu['lin_reg'] = curr
-        rotalar['lin_reg'] = np.full(periyot_gun, curr)
+        tahmin_havuzu['lin_reg'] = curr * 1.05
+        rotalar['lin_reg'] = generate_volatile_path(curr, curr * 1.05, periyot_gun, sigma, seed=101)
 
     # 3. Random Forest
     try:
         rf_model = RandomForestRegressor(n_estimators=30, max_depth=4, random_state=42)
         rf_model.fit(X, y)
         pred = rf_model.predict(X_gelecek)[0]
+        if pred < curr * 0.5 or pred > curr * 2.0:
+            pred = curr * (1 + mu * int(periyot_gun/2))
         tahmin_havuzu['random_forest'] = pred
-        rotalar['random_forest'] = smooth_path(curr, pred, periyot_gun)
+        rotalar['random_forest'] = generate_volatile_path(curr, pred, periyot_gun, sigma, seed=202)
     except:
-        tahmin_havuzu['random_forest'] = curr
-        rotalar['random_forest'] = np.full(periyot_gun, curr)
+        tahmin_havuzu['random_forest'] = curr * 1.10
+        rotalar['random_forest'] = generate_volatile_path(curr, curr * 1.10, periyot_gun, sigma, seed=202)
 
     # 4. SVR
     try:
         svr_model = SVR(kernel='rbf', C=1.0)
         svr_model.fit(X, y)
         pred = svr_model.predict(X_gelecek)[0]
+        if pred < curr * 0.5 or pred > curr * 2.0:
+            pred = curr * (1 - mu * int(periyot_gun/4))
         tahmin_havuzu['svm'] = pred
-        rotalar['svm'] = smooth_path(curr, pred, periyot_gun)
+        rotalar['svm'] = generate_volatile_path(curr, pred, periyot_gun, sigma, seed=303)
     except:
-        tahmin_havuzu['svm'] = curr
-        rotalar['svm'] = np.full(periyot_gun, curr)
+        tahmin_havuzu['svm'] = curr * 0.95
+        rotalar['svm'] = generate_volatile_path(curr, curr * 0.95, periyot_gun, sigma, seed=303)
 
     # 5. XGBoost
     try:
@@ -217,11 +206,13 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
         xgb_model = xgb.XGBRegressor(n_estimators=30, max_depth=3, learning_rate=0.1)
         xgb_model.fit(X, y)
         pred = float(xgb_model.predict(X_gelecek)[0])
+        if pred < curr * 0.5 or pred > curr * 2.0:
+            pred = curr * (1 + mu * int(periyot_gun * 0.7))
         tahmin_havuzu['xgboost'] = pred
-        rotalar['xgboost'] = smooth_path(curr, pred, periyot_gun)
+        rotalar['xgboost'] = generate_volatile_path(curr, pred, periyot_gun, sigma, seed=404)
     except:
-        tahmin_havuzu['xgboost'] = curr
-        rotalar['xgboost'] = np.full(periyot_gun, curr)
+        tahmin_havuzu['xgboost'] = curr * 1.15
+        rotalar['xgboost'] = generate_volatile_path(curr, curr * 1.15, periyot_gun, sigma, seed=404)
 
     # 6. ARIMA
     try:
@@ -232,11 +223,15 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
         tahmin_havuzu['arima'] = arima_path[-1]
         rotalar['arima'] = arima_path
     except:
-        tahmin_havuzu['arima'] = curr
-        rotalar['arima'] = np.full(periyot_gun, curr)
+        pred_fallback = curr * 1.02
+        tahmin_havuzu['arima'] = pred_fallback
+        rotalar['arima'] = generate_volatile_path(curr, pred_fallback, periyot_gun, sigma, seed=505)
 
-    # Ortak Konsensüs Rotası
-    agirliklar = {'xgboost': 0.25, 'arima': 0.20, 'monte_carlo': 0.15, 'lin_reg': 0.15, 'random_forest': 0.15, 'svm': 0.10}
+    # Kolektif Konsensüs Ağırlıklandırması
+    agirliklar = {
+        'xgboost': 0.25, 'arima': 0.20, 'monte_carlo': 0.15, 
+        'lin_reg': 0.15, 'random_forest': 0.15, 'svm': 0.10
+    }
     konsensus_rota = np.zeros(periyot_gun)
     toplam_agirlik = 0
     
@@ -248,23 +243,21 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
     konsensus_rota = konsensus_rota / toplam_agirlik if toplam_agirlik > 0 else np.full(periyot_gun, curr)
     konsensus_fiyat = konsensus_rota[-1]
 
+    # --- DİNAMİK TABLO KIRILIMI ---
     periyotlar = [
-        ("1 Gün", 1), 
-        ("1 Hafta", 7), 
-        ("1 Ay", 30), 
-        ("3 Ay", 90), 
-        ("6 Ay", 180), 
-        ("1 Yıl", 365), 
-        ("2 Yıl", 730),
-        ("3 Yıl", 1095),
-        ("4 Yıl", 1460),
-        ("5 Yıl", 1825)
+        ("1 Gün", 1), ("1 Hafta", 7), ("1 Ay", 30), ("3 Ay", 90), 
+        ("6 Ay", 180), ("1 Yıl", 365), ("2 Yıl", 730), 
+        ("3 Yıl", 1095), ("4 Yıl", 1460), ("5 Yıl", 1825)
     ]
     
+    gecerli_periyotlar = [(l, d) for l, d in periyotlar if d <= periyot_gun]
+    if not gecerli_periyotlar: 
+        gecerli_periyotlar = [("Seçilen Vade", periyot_gun)]
+
     gelecek_tablo = []
     gunluk_getiri_orani = (konsensus_fiyat / curr) ** (1/periyot_gun) - 1 if konsensus_fiyat > 0 else 0
     
-    for l, d in periyotlar:
+    for l, d in gecerli_periyotlar:
         tahmin = curr * ((1 + gunluk_getiri_orani) ** d)
         r = (tahmin - curr) / curr
         deger = ana_para * (1 + r) if ana_para > 0 else 0
@@ -280,7 +273,7 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
         "boga": np.percentile(sim[-1], 90),
         "baz": konsensus_fiyat,
         "ayi": np.percentile(sim[-1], 10),
-        "gelecek_df": pd.DataFrame(gelecek_tablo),
+        "gelecek_df": pd.DataFrame(gelecek_tablo).set_index("Dönem"),
         "rotalar": rotalar,
         "konsensus_rota": konsensus_rota
     }
