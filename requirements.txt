@@ -8,4 +8,13 @@ statsmodels
 pyarrow
 xgboost==2.0.3
 plotly
-google-generativeai
+streamlit
+yfinance
+google-genai
+requests
+pandas
+numpy
+xgboost
+scikit-learn
+matplotlib
+plotly
