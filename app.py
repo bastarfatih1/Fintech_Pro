@@ -15,6 +15,14 @@ import streamlit as st
 import yfinance as yf
 from finans_motoru import get_kurlar, hesapla_gecmis_performans, gelecek_senaryolari_hesapla
 from haber_motoru import canli_rss_haber_cek, ai_etki_analizi, ai_teknik_analiz_yorumu, ai_model_yorumu
+import streamlit as st
+# Basit bir kullanıcı/şifre kontrolü
+def check_password():
+    st.sidebar.text_input("Kullanıcı Adı", key="user")
+    st.sidebar.text_input("Şifre", type="password", key="password")
+    if st.sidebar.button("Giriş Yap"):
+        if st.session_state.user == "fatih" and st.session_state.password == "123456":
+            st.session_state.logged_in = True
 
 # --- 1. AYARLAR VE TASARIM ---
 st.set_page_config(page_title="Fintech Alpha Pro Final", layout="wide")
