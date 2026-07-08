@@ -1,15 +1,11 @@
 import numpy as np
 import pandas as pd
 import gc
+import requests
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from datetime import timedelta
-
-# Makine Öğrenimi Kütüphaneleri
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.svm import SVR
-from sklearn.linear_model import LinearRegression
 
 # Ağır kütüphaneleri (LSTM, ARIMA, XGBoost) import ederken sistemin çökmemesi için try-except kullanıyoruz.
 try:
@@ -17,10 +13,6 @@ try:
     STATSMODELS_AVAILABLE = True
 except ImportError:
     STATSMODELS_AVAILABLE = False
-
-
-
-
 
 def get_kurlar():
     # API KEY'inizi buraya girin
@@ -35,7 +27,7 @@ def get_kurlar():
         rates = response.json().get('conversion_rates', {})
         
         # Dönüştürücü modülünün matematiksel olarak doğru çalışması için
-        # kurların "1 USD = X Birim" formatında saf olarak dönmesi zorunludur.[cite: 2]
+        # kurların "1 USD = X Birim" formatında saf olarak dönmesi zorunludur.
         return {
             "USD": 1.0, 
             "TRY": rates.get('TRY', 34.0), 
@@ -48,13 +40,12 @@ def get_kurlar():
         }
     except Exception as e:
         print(f"[API Hatası] {e}")
-        # API çökerse veya sınır (limit) aşılırsa çeviri matematiğini bozmayacak DOĞRU yedek oranlar[cite: 2]
+        # API çökerse veya sınır (limit) aşılırsa çeviri matematiğini bozmayacak DOĞRU yedek oranlar
         return {
             "USD": 1.0, "TRY": 34.0, "EUR": 0.92, "CNY": 7.25, "RUB": 88.0, "SAR": 3.75, "KWD": 0.30, "JPY": 160.0
         }
 
 def hesapla_gecmis_performans(data, curr_price, ana_para, kur_val, sembol):
-    # Bu fonksiyon önceki halinde çok iyi tasarlandığı için aynı bırakıldı.
     sonuclar = []
     bugun = data.index[-1].tz_localize(None) 
     
@@ -72,11 +63,18 @@ def hesapla_gecmis_performans(data, curr_price, ana_para, kur_val, sembol):
         except:
             pass 
             
+    # Gerçek TAKVİM süreleri (2 Yıl ve 4 Yıl eklendi)
     zaman_farklari = {
-        "1 Gün": timedelta(days=1), "1 Hafta": timedelta(days=7),
-        "1 Ay": timedelta(days=30), "3 Ay": timedelta(days=90),
-        "6 Ay": timedelta(days=180), "1 Yıl": timedelta(days=365),
-        "3 Yıl": timedelta(days=1095), "5 Yıl": timedelta(days=1825)
+        "1 Gün": timedelta(days=1),
+        "1 Hafta": timedelta(days=7),
+        "1 Ay": timedelta(days=30),
+        "3 Ay": timedelta(days=90),
+        "6 Ay": timedelta(days=180),
+        "1 Yıl": timedelta(days=365),
+        "2 Yıl": timedelta(days=730),
+        "3 Yıl": timedelta(days=1095),
+        "4 Yıl": timedelta(days=1460),
+        "5 Yıl": timedelta(days=1825)
     }
     
     data_temiz = data.copy()
@@ -119,31 +117,46 @@ def hesapla_gecmis_performans(data, curr_price, ana_para, kur_val, sembol):
             
     return pd.DataFrame(sonuclar)
 
-# --- YENİ EKLENEN KISIM: ORKESTRATÖR VE KONSENSÜS MOTORU ---
+# --- ORKESTRATÖR VE KONSENSÜS MOTORU ---
 
 def hazirla_ml_verisi(data):
     df = pd.DataFrame(data['Close'].copy())
+    
+    # Mevcut bilimsel analiz verileri
     df['Lag_1'] = df['Close'].shift(1)
+    df['Lag_2'] = df['Close'].shift(2)  # X_gelecek için eklendi
     df['Lag_3'] = df['Close'].shift(3)
+    df['Lag_6'] = df['Close'].shift(6)  # X_gelecek için eklendi
     df['Lag_7'] = df['Close'].shift(7)
     df['MA_14'] = df['Close'].rolling(window=14).mean()
+    
+    # RSI İNDİKATÖRÜ
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # Tüm eksik (NaN) satırları temizliyoruz
     df = df.dropna()
     
-    X = df[['Lag_1', 'Lag_3', 'Lag_7', 'MA_14']].values
+    # Yapay zekaya besleyeceğimiz özellik listesine RSI'ı da ekliyoruz
+    ozellikler = ['Lag_1', 'Lag_3', 'Lag_7', 'MA_14', 'RSI']
+    X = df[ozellikler].values
     y = df['Close'].values
     
-    # HATA DÜZELTİLDİ: Boyut uyuşmazlığı nedeniyle modellerin çökmesi (Düz çizgi hatası) engellendi.
+    # Yarının girdileri (X_gelecek) eşleştirmesi
     X_gelecek = np.array([
-        df['Close'].iloc[-1],  
-        df['Lag_1'].iloc[-1], 
-        df['Lag_3'].iloc[-1], 
-        df['MA_14'].iloc[-1]   
+        df['Close'].iloc[-1],       
+        df['Lag_2'].iloc[-1],       
+        df['Lag_6'].iloc[-1],       
+        df['MA_14'].iloc[-1],       
+        df['RSI'].iloc[-1]          
     ]).reshape(1, -1)
     
     return X, y, X_gelecek
 
-# periyot_gun argümanını varsayılan olarak 1095 (3 yıl) olarak değiştirdik[cite: 2]
-def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, periyot_gun=1095):
+def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, periyot_gun=1825):
     data_kisa = data.tail(1500).copy()
     tahmin_havuzu = {}
     rotalar = {}
@@ -155,7 +168,7 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
     for i in range(500):
         sim[:, i] = curr * np.exp(np.cumsum((mu - 0.5 * sigma**2) + sigma * np.random.normal(0, 1, periyot_gun)))
     
-    mc_path = np.mean(sim, axis=1)
+    mc_path = np.median(sim, axis=1)
     tahmin_havuzu['monte_carlo'] = mc_path[-1]
     rotalar['monte_carlo'] = mc_path
 
@@ -235,7 +248,6 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
     konsensus_rota = konsensus_rota / toplam_agirlik if toplam_agirlik > 0 else np.full(periyot_gun, curr)
     konsensus_fiyat = konsensus_rota[-1]
 
-    # --- DEĞİŞİKLİK BURADA: 5 Yıl satırı tablodan tamamen çıkarıldı, maksimum sınır 3 Yıl (1095 Gün) yapıldı ---
     periyotlar = [
         ("1 Gün", 1), 
         ("1 Hafta", 7), 
@@ -243,7 +255,10 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
         ("3 Ay", 90), 
         ("6 Ay", 180), 
         ("1 Yıl", 365), 
-        ("3 Yıl", 1095)
+        ("2 Yıl", 730),
+        ("3 Yıl", 1095),
+        ("4 Yıl", 1460),
+        ("5 Yıl", 1825)
     ]
     
     gelecek_tablo = []
@@ -265,7 +280,7 @@ def gelecek_senaryolari_hesapla(data, curr, ana_para, kur_val, sembol_isareti, p
         "boga": np.percentile(sim[-1], 90),
         "baz": konsensus_fiyat,
         "ayi": np.percentile(sim[-1], 10),
-        "gelecek_df": pd.DataFrame(gelecek_tablo).set_index("Dönem"),
+        "gelecek_df": pd.DataFrame(gelecek_tablo),
         "rotalar": rotalar,
         "konsensus_rota": konsensus_rota
     }
