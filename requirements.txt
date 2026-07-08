@@ -7,5 +7,5 @@ scikit-learn
 statsmodels
 pyarrow
 xgboost==2.0.3
-ollama
 plotly
+google-generativeai
