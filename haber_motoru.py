@@ -2,139 +2,110 @@ import os
 import requests
 import urllib.parse
 import xml.etree.ElementTree as ET
+import json
+import re
 import streamlit as st
-from google import genai  # Resmi yeni Google SDK
 
-def gemini_baslat():
-    api_key = None
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            api_key = st.secrets["GEMINI_API_KEY"]
-    except:
-        pass
-        
-    if not api_key:
-        api_key = "AIzaSyCZGqjtf3MbqIsRQud3oBzFc3vwGvJ7nTw"
-        
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        print(f"[Gemini Başlatma Hatası]: {e}")
-        return None
-
-def canli_rss_haber_cek(arama_kelimesi):
-    haberler = []
-    client = gemini_baslat()
+def anahtarsiz_ai_cagir(prompt):
+    """
+    Hugging Face Serverless API kullanarak tamamen ücretsiz, 
+    kurulumsuz ve anahtarsız yapay zeka çağırma motoru.
+    """
+    API_URL = "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-7B-Instruct"
+    
+    payload = {
+        "inputs": f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n",
+        "parameters": {
+            "max_new_tokens": 250,
+            "temperature": 0.3, 
+            "return_full_text": False
+        }
+    }
     
     try:
-        query = urllib.parse.quote(f"{arama_kelimesi} market finance")
-        url = f"https://news.google.com/rss/search?q={query}&hl=tr&gl=TR&ceid=TR:tr"
-        
+        response = requests.post(API_URL, json=payload, timeout=15)
+        if response.status_code == 200:
+            res_json = response.json()
+            if isinstance(res_json, list) and len(res_json) > 0:
+                return res_json[0].get("generated_text", "").strip()
+            elif isinstance(res_json, dict):
+                return res_json.get("generated_text", "").strip()
+        return None
+    except Exception as e:
+        print(f"Anahtarsız AI Motoru Hatası: {e}")
+        return None
+
+@st.cache_data(ttl=3600)
+def ai_teknik_analiz_yorumu(enstruman, anlik, boga, ayi):
+    prompt = f"Sen profesyonel bir borsa analistisin. {enstruman} şu an {anlik:.2f}. Boğa hedefi {boga:.2f}, Ayı hedefi {ayi:.2f}. Kısa, net, maksimum 2 cümlelik teknik bir yorum yap."
+    cevap = anahtarsiz_ai_cagir(prompt)
+    return cevap if cevap else "Teknik analiz yorumu şu an üretilemiyor."
+
+def ai_etki_analizi(baslik, varlik):
+    prompt = f"Haber: '{baslik}'. Bu haber {varlik} varlığını nasıl etkiler? SADECE şu formatta cevap ver, başka hiçbir kelime ekleme: YÖN (POZİTİF/NEGATİF/NÖTR)|ETKİ YÜZDESİ|Kısa özet."
+    cevap = anahtarsiz_ai_cagir(prompt)
+    return cevap if cevap else "NÖTR|0|Haber analiz edilemedi."
+
+@st.cache_data(ttl=3600)
+def ai_toplu_model_yorumlari(enstruman, anlik, vade, modeller_verisi):
+    modeller_metni = "\n".join([f"- {m}: {vade} hedefi {hedef:.2f}" for m, hedef in modeller_verisi.items()])
+    
+    prompt = f"""Sen bir kantitatif analistsin. {enstruman} şu an {anlik:.2f} seviyesinde. 
+    Modellerin hedefleri şunlardır:
+    {modeller_metni}
+
+    Her modelin hedefini tek (1) kısa cümleyle yorumla.
+    SADECE AŞAĞIDAKİ JSON FORMATINDA CEVAP VER, BAŞKA HİÇBİR ŞEY YAZMA:
+    {{
+        "random_forest": "Yorum",
+        "svm": "Yorum",
+        "lin_reg": "Yorum",
+        "arima": "Yorum",
+        "monte_carlo": "Yorum",
+        "xgboost": "Yorum"
+    }}
+    """
+    
+    sonuclar = {m: "🤖 Analiz izleniyor." for m in modeller_verisi.keys()}
+    cevap = anahtarsiz_ai_cagir(prompt)
+    
+    if cevap:
+        try:
+            match = re.search(r'\{.*\}', cevap, re.DOTALL)
+            if match:
+                ai_cevaplari = json.loads(match.group(0))
+                for m in modeller_verisi.keys():
+                    for ai_key, ai_yorum in ai_cevaplari.items():
+                        if m.lower() in ai_key.lower() or m.replace("_", "").lower() in ai_key.lower():
+                            sonuclar[m] = ai_yorum
+                            break
+        except Exception as e:
+            print(f"JSON Çözümleme Hatası: {e}")
+            
+    return sonuclar
+
+def canli_rss_haber_cek(arama_kelimesi):
+    try:
+        query = urllib.parse.quote(f"{arama_kelimesi} finance")
+        url = f"https://news.google.com/rss/search?q={query}&hl=tr&gl=TR"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        
         root = ET.fromstring(response.content)
-        
+        haberler = []
         for item in root.findall('./channel/item')[:4]:
             title_elem = item.find('title')
             link_elem = item.find('link')
-            
-            if title_elem is None or link_elem is None:
-                continue
-                
-            title = title_elem.text
-            link = link_elem.text
+            if title_elem is None or link_elem is None: continue
             
             pub_date_elem = item.find('pubDate')
-            pub_date = pub_date_elem.text if pub_date_elem is not None else "Tarih Belirtilmemiş"
-            if " GMT" in pub_date:
-                pub_date = pub_date.replace(" GMT", "")[:-3]
-                
             source_elem = item.find('source')
-            media_name = source_elem.text if source_elem is not None else "Haber Kaynağı"
-            
-            if client:
-                try:
-                    prompt = f"Şu haber başlığını oku: '{title}'. Bu haber doğrudan ekonomi, finans veya piyasalarla mı ilgili? Sadece 'EVET' veya 'HAYIR' yaz, başka hiçbir kelime kullanma."
-                    # DEĞİŞİKLİK: model ismi güncellendi ve ön ek kaldırıldı
-                    ai_response = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=prompt,
-                    )
-                    ai_cevap = ai_response.text.strip().upper()
-                    
-                    if "EVET" in ai_cevap:
-                        haberler.append({"title": title, "link": link, "media": media_name, "date": pub_date})
-                except Exception as ai_err:
-                    print(f"[Gemini Filtre Hatası]: {ai_err}")
-                    haberler.append({"title": title, "link": link, "media": media_name, "date": pub_date})
-            else:
-                haberler.append({"title": title, "link": link, "media": media_name, "date": pub_date})
-                
+            haberler.append({
+                "title": title_elem.text, 
+                "link": link_elem.text, 
+                "media": source_elem.text if source_elem is not None else "Haber Kaynağı",
+                "date": pub_date_elem.text if pub_date_elem is not None else "Tarih Yok"
+            })
+        return haberler
     except Exception as e:
-        print(f"[Haber Motoru RSS Hatası]: {e}")
-        
-    return haberler
-
-def ai_etki_analizi(haber_basligi, enstruman_ismi):
-    try:
-        client = gemini_baslat()
-        if not client:
-            return "NÖTR | 0.0 | AI motoru başlatılamadı."
-            
-        prompt = f"""Sen profesyonel bir kantitatif analistsin. Şu haberin: '{haber_basligi}' -> {enstruman_ismi} fiyatlarına olası etkisini analiz et.
-        LÜTFEN SADECE AŞAĞIDAKİ FORMATTA YANIT VER (Başka hiçbir açıklama veya markdown ekleme):
-        ETKİ YÖNÜ (POZİTİF, NEGATİF veya NÖTR) | ETKİ YÜZDESİ (Sadece rakam, örn: 2.5) | 1 CÜMLELİK ÖZET
-        Örnek: POZİTİF | 1.5 | Şirketin yeni yatırımı büyüme beklentilerini artırdı."""
-        
-        # DEĞİŞİKLİK: model ismi güncellendi
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"[Gemini Etki Analiz Hatası]: {e}")
-        return "NÖTR | 0.0 | Yapay zeka analiz motoruna şu an ulaşılamıyor."
-
-def ai_teknik_analiz_yorumu(enstruman_ismi, anlik_fiyat, boga_fiyat, ayi_fiyat):
-    try:
-        client = gemini_baslat()
-        if not client:
-            return "🤖 AI Yorum Motoru Çevrimdışı"
-            
-        prompt = f"""Sen Wall Street seviyesinde profesyonel bir teknik analistsin. 
-        {enstruman_ismi} şu an {anlik_fiyat} seviyenisinden işlem görüyor. 
-        Yapay zeka ve kantitatif algoritmalarımız bu varlık için önümüzdeki dönemde iyimser (boğa) hedefi {boga_fiyat:.2f}, kötümser (ayı) destek seviyesini ise {ayi_fiyat:.2f} olarak belirledi.
-        Lütfen yatırımcılara bu durumu özetleyen, 2-3 cümlelik çok profesyonel ve teknik bir piyasa yorumu yap. Sadece yorum metnini ver, başlık vs. kullanma."""
-        
-        # DEĞİŞİKLİK: model ismi güncellendi
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"[Gemini Teknik Analiz Hatası]: {e}")
-        return "🤖 AI Yorum Motoru: Teknik indikatörler ve formasyon hedefleri doğrultusunda fiyat takibi sürdürülmelidir."
-
-def ai_model_yorumu(model_adi, enstruman_ismi, anlik_fiyat, hedef_fiyat, vade):
-    try:
-        client = gemini_baslat()
-        if not client:
-            return "🤖 AI Model Yorumu Çevrimdışı"
-            
-        prompt = f"""Sen profesyonel bir kantitatif analistsin.
-        {enstruman_ismi} şu an {anlik_fiyat:.2f} seviyesinde. Bizim '{model_adi}' isimli algoritmamız, {vade} sonra fiyatın {hedef_fiyat:.2f} olacağını öngörüyor.
-        Lütfen bu {model_adi} modelinin bu varlık için yaptığı öngörüyü yatırımcıya yorumla. 
-        SADECE 2 cümlelik, çok teknik ve profesyonel bir açıklama yaz. Başlık veya giriş kullanma."""
-        
-        # DEĞİŞİKLİK: model ismi güncellendi
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"[Gemini Model Yorum Hatası]: {e}")
-        return "🤖 AI Yorumu: Model projeksiyonları piyasa hacmi ve momentum doğrultusunda izlenmelidir."
+        print(f"Haber Hatası: {e}")
+        return []
