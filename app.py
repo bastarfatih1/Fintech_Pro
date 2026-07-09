@@ -12,7 +12,7 @@ import streamlit as st
 import yfinance as yf
 from plotly.subplots import make_subplots
 from components.header import render_market_ticker
-
+from components.sidebar import render_sidebar_header
 from config.constants import CURRENCY_SYMBOLS
 from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
@@ -29,13 +29,9 @@ from haber_motoru import (
 )
 
 initialize_application()
-
 render_market_ticker()
+render_sidebar_header()
 
-# --- YAPAY ZEKA KONTROL PANELİ ---
-st.sidebar.title("🏛️ Terminal Kontrolü")
-st.sidebar.caption("Yapay Zeka & Kantitatif Risk Motoru")
-st.sidebar.divider()
 
 @st.cache_data(ttl=900)
 def kurlari_getir_cache():
