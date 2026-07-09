@@ -1,34 +1,31 @@
 import os
+import time
+
 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import requests
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
-import numpy as np
+import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-import time
+from plotly.subplots import make_subplots
+
+from config.constants import CURRENCY_SYMBOLS
+from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
-initialize_application()
 from finans_motoru import (
-    get_kurlar, 
-    hesapla_gecmis_performans, 
-    gelecek_senaryolari_hesapla
+    gelecek_senaryolari_hesapla,
+    get_kurlar,
+    hesapla_gecmis_performans,
 )
 from haber_motoru import (
-    canli_rss_haber_cek, 
-    ai_etki_analizi, 
+    ai_etki_analizi,
     ai_teknik_analiz_yorumu,
-    ai_toplu_model_yorumlari
-    
-    
+    ai_toplu_model_yorumlari,
+    canli_rss_haber_cek,
 )
-
-
 
 initialize_application()
 
@@ -52,25 +49,23 @@ col_g1, col_g2, col_g3, col_g4 = st.columns([2, 1, 1, 1])
 ana_para = col_g1.number_input("Stratejik Yatırım Tutarı:", value=0.0, step=10000.0)
 secilen_kur = col_g2.selectbox("Baz Para Birimi:", ["TRY", "USD", "EUR", "CNY", "RUB", "JPY", "SAR", "KWD"])
 
-enstrumanlar = {
-    "BIST 100": "XU100.IS", 
-    "Bitcoin (BTC)": "BTC-USD", 
-    "Altın (Ons)": "GC=F", 
-    "Gümüş (Ons)": "SI=F", 
-    "S&P 500": "^GSPC",
-    "NVIDIA": "NVDA",
-    "APPLE": "AAPL"
-}    
-secilen_varlik = col_g3.selectbox("Analiz Edilecek Varlık:", list(enstrumanlar.keys()))
+  
+secilen_varlik = col_g3.selectbox(
+    "Analiz Edilecek Varlık:",
+    list(INSTRUMENTS.keys()),
+)
 
 zaman_secenekleri = {
     "1 Ay": 30, "3 Ay": 90, "6 Ay": 180, "1 Yıl": 365, "3 Yıl": 1095, "5 Yıl": 1825
 }
-secilen_vade = col_g4.selectbox("Projeksiyon Vadesi:", list(zaman_secenekleri.keys()), index=3)
-hedef_gun = zaman_secenekleri[secilen_vade]
+secilen_vade = col_g4.selectbox(
+    "Projeksiyon Vadesi:",
+    list(FORECAST_PERIODS.keys()),
+    index=3,
+)
+hedef_gun = FORECAST_PERIODS[secilen_vade]
 
-sembol_sozluk = {"TRY": "₺", "USD": "$", "EUR": "€", "CNY": "¥", "RUB": "₽", "JPY": "¥", "SAR": "﷼", "KWD": "د.k"}
-s = sembol_sozluk[secilen_kur]
+s = CURRENCY_SYMBOLS[secilen_kur]
 kur_val = kurlar.get(secilen_kur, 1.0)
 
 st.divider()
@@ -86,7 +81,7 @@ def varlik_verisi_getir(sembol):
 if "analiz_tamam" not in st.session_state:
     st.session_state.analiz_tamam = False
 
-sembol = enstrumanlar[secilen_varlik]
+sembol = INSTRUMENTS[secilen_varlik]
 
 if st.button("🚀 Kurumsal Gelişmiş AI Projeksiyonunu Başlat", use_container_width=True, type="primary"):
     st.session_state.analiz_tamam = True
