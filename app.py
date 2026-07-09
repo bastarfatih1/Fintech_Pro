@@ -8,9 +8,8 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 import streamlit as st
 from components.header import render_market_ticker
+from components.input_panel import render_input_panel
 from components.sidebar import render_sidebar_header
-from config.constants import CURRENCY_SYMBOLS
-from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.analysis_panel import render_analysis_panel
@@ -35,34 +34,21 @@ render_sidebar_header()
 
 kurlar = get_cached_currencies()
 
-# Ana Parametreler
-col_g1, col_g2, col_g3, col_g4 = st.columns([2, 1, 1, 1])
-ana_para = col_g1.number_input("Stratejik Yatırım Tutarı:", value=0.0, step=10000.0)
-secilen_kur = col_g2.selectbox("Baz Para Birimi:", ["TRY", "USD", "EUR", "CNY", "RUB", "JPY", "SAR", "KWD"])
+inputs = render_input_panel(kurlar)
 
-  
-secilen_varlik = col_g3.selectbox(
-    "Analiz Edilecek Varlık:",
-    list(INSTRUMENTS.keys()),
-)
-
-secilen_vade = col_g4.selectbox(
-    "Projeksiyon Vadesi:",
-    list(FORECAST_PERIODS.keys()),
-    index=3,
-)
-hedef_gun = FORECAST_PERIODS[secilen_vade]
-
-s = CURRENCY_SYMBOLS[secilen_kur]
-kur_val = kurlar.get(secilen_kur, 1.0)
+ana_para = inputs.investment_amount
+secilen_kur = inputs.currency_code
+secilen_varlik = inputs.asset_name
+hedef_gun = inputs.forecast_days
+s = inputs.currency_symbol
+kur_val = inputs.currency_rate
+sembol = inputs.market_symbol
 
 st.divider()
 
 
 if "analiz_tamam" not in st.session_state:
     st.session_state.analiz_tamam = False
-
-sembol = INSTRUMENTS[secilen_varlik]
 
 if st.button("🚀 Kurumsal Gelişmiş AI Projeksiyonunu Başlat", use_container_width=True, type="primary"):
     st.session_state.analiz_tamam = True
