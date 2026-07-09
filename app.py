@@ -9,7 +9,6 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 from components.header import render_market_ticker
 from components.sidebar import render_sidebar_header
 from config.constants import CURRENCY_SYMBOLS
@@ -18,6 +17,7 @@ from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.metrics import render_risk_metrics
 from components.tabs import create_main_tabs
+from charts.candlestick import create_price_volume_chart
 from services.cache_service import (
     get_cached_asset_history,
     get_cached_currencies,
@@ -25,7 +25,6 @@ from services.cache_service import (
 )
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
-    get_kurlar,
     hesapla_gecmis_performans,
 )
 from haber_motoru import (
@@ -54,9 +53,6 @@ secilen_varlik = col_g3.selectbox(
     list(INSTRUMENTS.keys()),
 )
 
-zaman_secenekleri = {
-    "1 Ay": 30, "3 Ay": 90, "6 Ay": 180, "1 Yıl": 365, "3 Yıl": 1095, "5 Yıl": 1825
-}
 secilen_vade = col_g4.selectbox(
     "Projeksiyon Vadesi:",
     list(FORECAST_PERIODS.keys()),
@@ -89,8 +85,8 @@ if st.session_state.analiz_tamam:
         if data is not None and not data.empty:
             curr = float(data['Close'].iloc[-1])
             haberler = get_cached_news(
-    secilen_varlik.split("(")[0]
-)
+                secilen_varlik.split("(")[0]
+            )
             my_bar.progress(50, text="Monte Carlo simülasyonları ve ML rota optimizasyonu tamamlanıyor...")
             
             gelecek = gelecek_senaryolari_hesapla(
@@ -114,9 +110,7 @@ if st.session_state.analiz_tamam:
                 
                 # TRADINGVIEW SEVİYESİ GRAFİK
                 grafik_veri = data.tail(250).copy() 
-                grafik_veri['EMA20'] = grafik_veri['Close'].ewm(span=20, adjust=False).mean()
-                grafik_veri['EMA50'] = grafik_veri['Close'].ewm(span=50, adjust=False).mean()
-                grafik_veri['EMA200'] = grafik_veri['Close'].ewm(span=200, adjust=False).mean()
+               
                 
                 # RSI Uyarısı
                 rsi_son = grafik_veri['Close'].diff().apply(lambda x: x if x > 0 else 0).rolling(14).mean() / (abs(grafik_veri['Close'].diff().apply(lambda x: x if x < 0 else 0)).rolling(14).mean() + 1e-9)
@@ -125,34 +119,24 @@ if st.session_state.analiz_tamam:
                     st.warning(f"⚠️ Teknik Uyarı: RSI seviyesi ({rsi_val:.1f}) varlığın aşırı alındığına işaret ediyor.")
                 elif rsi_val < 30:
                     st.success(f"✅ Teknik Uyarı: RSI seviyesi ({rsi_val:.1f}) varlığın aşırı satıldığını (dip) gösteriyor.")
-                
-                fig_ana = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-                
-                # Mumlar
-                fig_ana.add_trace(go.Candlestick(x=grafik_veri.index, open=grafik_veri['Open'], high=grafik_veri['High'], low=grafik_veri['Low'], close=grafik_veri['Close'], name='Fiyat'), row=1, col=1)
-                
-                # EMAs
-                fig_ana.add_trace(go.Scatter(x=grafik_veri.index, y=grafik_veri['EMA20'], line=dict(color='blue', width=1), name='EMA 20'), row=1, col=1)
-                fig_ana.add_trace(go.Scatter(x=grafik_veri.index, y=grafik_veri['EMA50'], line=dict(color='orange', width=1.2), name='EMA 50'), row=1, col=1)
-                fig_ana.add_trace(go.Scatter(x=grafik_veri.index, y=grafik_veri['EMA200'], line=dict(color='white', width=1.5, dash='dot'), name='EMA 200'), row=1, col=1)
-                
-                # Hedef Bölgeleri (Yarı saydam)
-                fig_ana.add_hrect(y0=gelecek['ayi'], y1=curr*kur_val, fillcolor="red", opacity=0.05, layer="below", line_width=0, row=1, col=1)
-                fig_ana.add_hrect(y0=curr*kur_val, y1=gelecek['boga'], fillcolor="green", opacity=0.05, layer="below", line_width=0, row=1, col=1)
 
-                # Renkli Hacim
-                colors = ['#00ff88' if r['Close'] >= r['Open'] else '#ff4d4d' for idx, r in grafik_veri.iterrows()]
-                fig_ana.add_trace(go.Bar(x=grafik_veri.index, y=grafik_veri['Volume'], marker_color=colors, name='Hacim'), row=2, col=1)
-                
-                # Grafik Ayarları (Zoom, Pan, Crosshair)
-                fig_ana.update_layout(
-                    template="plotly_dark", height=650, margin=dict(l=0, r=0, t=10, b=0), 
-                    xaxis_rangeslider_visible=False, showlegend=True,
-                    hovermode='x unified', dragmode='pan'
+                fig_ana = create_price_volume_chart(
+                    data=data,
+                    currency_rate=kur_val,
+                    current_price=curr,
+                    bear_target=gelecek["ayi"],
+                    bull_target=gelecek["boga"],
                 )
-                fig_ana.update_xaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across")
-                fig_ana.update_yaxes(showspikes=True, spikecolor="gray", spikemode="across")
-                st.plotly_chart(fig_ana, use_container_width=True, config={'scrollZoom': True})
+
+                st.plotly_chart(
+                    fig_ana,
+                    use_container_width=True,
+                    config={
+                        "scrollZoom": True,
+                        "displaylogo": False,
+                        "responsive": True,
+                    },
+                )
                 
                 st.info(f"**🤖 AI Sentezi:** {ai_teknik_analiz_yorumu(secilen_varlik, curr, gelecek['boga'], gelecek['ayi'])}")
 
