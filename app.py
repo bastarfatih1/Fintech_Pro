@@ -6,8 +6,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 from components.header import render_market_ticker
 from components.sidebar import render_sidebar_header
@@ -18,6 +16,7 @@ from components.footer import render_action_footer
 from components.metrics import render_risk_metrics
 from components.tabs import create_main_tabs
 from charts.candlestick import create_price_volume_chart
+from charts.consensus import create_consensus_chart
 from charts.rsi import analyze_rsi
 from services.cache_service import (
     get_cached_asset_history,
@@ -31,8 +30,6 @@ from finans_motoru import (
 from haber_motoru import (
     ai_etki_analizi,
     ai_teknik_analiz_yorumu,
-    ai_toplu_model_yorumlari,
-    
 )
 
 initialize_application()
@@ -141,30 +138,21 @@ if st.session_state.analiz_tamam:
 
             with tabs[1]:
                 st.markdown("### 🎯 Kurumsal Konsensüs & AI Projeksiyonu")
-                
-                # KONSENSÜS GRAFİĞİ (GÜVEN KORİDORLU)
-                rota_kesiti = gelecek["konsensus_rota"]
-                mc_upper = gelecek["mc_upper"]
-                mc_lower = gelecek["mc_lower"]
-                gelecek_tarihler = pd.date_range(start=data.index[-1] + pd.Timedelta(days=1), periods=len(rota_kesiti))
-                
-                fig_gelecek = go.Figure()
-                
-                # %90 Güven Bandı (Monte Carlo)
-                fig_gelecek.add_trace(go.Scatter(x=gelecek_tarihler, y=mc_upper, mode='lines', line=dict(width=0), showlegend=False))
-                fig_gelecek.add_trace(go.Scatter(x=gelecek_tarihler, y=mc_lower, mode='lines', fill='tonexty', fillcolor='rgba(0, 187, 255, 0.1)', line=dict(width=0), name='90% MC Güven Koridoru'))
-                
-                # Modeller
-                renk_paleti = ['#FF4B4B', '#00E676', '#E040FB', '#FFD54F', '#00B0FF', '#FF9100']
-                for i, (m_adi, m_rota) in enumerate(gelecek["rotalar"].items()):
-                    if m_adi != "Monte_Carlo":
-                        fig_gelecek.add_trace(go.Scatter(x=gelecek_tarihler, y=m_rota, mode='lines', name=m_adi.upper(), line=dict(color=renk_paleti[i % len(renk_paleti)], width=1.5, dash='dash')))
-                
-                # Ana Konsensüs
-                fig_gelecek.add_trace(go.Scatter(x=gelecek_tarihler, y=rota_kesiti, mode='lines', name='🎯 AĞIRLIKLI KONSENSÜS', line=dict(color='#00ff88', width=4)))
-                
-                fig_gelecek.update_layout(template="plotly_dark", height=550, hovermode='x unified')
-                st.plotly_chart(fig_gelecek, use_container_width=True)
+
+                fig_gelecek = create_consensus_chart(
+                    forecast_data=gelecek,
+                    last_date=data.index[-1],
+                )
+
+                st.plotly_chart(
+                    fig_gelecek,
+                    use_container_width=True,
+                    config={
+                        "scrollZoom": True,
+                        "displaylogo": False,
+                        "responsive": True,
+                    },
+                )
 
                 st.markdown("#### Detaylı Gelecek Değerlemeleri")
                 st.table(gelecek["gelecek_df"])
