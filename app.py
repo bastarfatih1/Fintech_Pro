@@ -14,6 +14,7 @@ from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.metrics import render_risk_metrics
+from components.news_panel import render_news_panel
 from components.tabs import create_main_tabs
 from charts.candlestick import create_price_volume_chart
 from charts.consensus import create_consensus_chart
@@ -28,7 +29,6 @@ from finans_motoru import (
     hesapla_gecmis_performans,
 )
 from haber_motoru import (
-    ai_etki_analizi,
     ai_teknik_analiz_yorumu,
 )
 
@@ -158,22 +158,10 @@ if st.session_state.analiz_tamam:
                 st.table(gelecek["gelecek_df"])
 
             with tabs[2]:
-                st.markdown("### 📰 Gerçek Zamanlı AI Duyarlılık (Sentiment) Analizi")
-                if haberler:
-                    for h in haberler:
-                        with st.container():
-                            st.markdown(f"<div class='news-card'><h4><a href='{h['link']}' target='_blank' style='color:#00bbff; text-decoration:none;'>{h['title']}</a></h4><p style='color:#a0a0a0; font-size:12px;'>📰 Kaynak: {h['media']} | 📅 Tarih: {h['date']}</p></div>", unsafe_allow_html=True)
-                            
-                            etki_analiz_sonucu = ai_etki_analizi(h['title'], secilen_varlik)
-                            try:
-                                etki_yonu, etki_yuzde, guven_skoru, ozet = etki_analiz_sonucu.split("|")
-                                renk = "#00ff88" if "POZİTİF" in etki_yonu else "#ff4d4d" if "NEGATİF" in etki_yonu else "#a0a0a0"
-                                st.markdown(f"**Yön:** <span style='color:{renk};'>{etki_yonu}</span> | **Etki:** %{etki_yuzde.strip()} | **AI Güven Skoru:** {guven_skoru.strip()}/100<br>📝 *Özet:* {ozet.strip()}", unsafe_allow_html=True)
-                            except:
-                                st.markdown(f"🤖 **Analiz Sonucu:** {etki_analiz_sonucu}")
-                            st.divider()
-                else:
-                    st.info("Kritik haber akışı bulunamadı.")
+                render_news_panel(
+                    news_items=haberler,
+                    asset_name=secilen_varlik,
+                )
 
             with tabs[3]:
                 st.markdown("### 📊 Tarihsel Verim & Enflasyon Karşılaştırması")
