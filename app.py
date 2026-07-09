@@ -15,6 +15,7 @@ from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.metrics import render_risk_metrics
 from components.news_panel import render_news_panel
+from components.performance_panel import render_performance_panel
 from components.tabs import create_main_tabs
 from charts.candlestick import create_price_volume_chart
 from charts.consensus import create_consensus_chart
@@ -26,7 +27,6 @@ from services.cache_service import (
 )
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
-    hesapla_gecmis_performans,
 )
 from haber_motoru import (
     ai_teknik_analiz_yorumu,
@@ -164,11 +164,14 @@ if st.session_state.analiz_tamam:
                 )
 
             with tabs[3]:
-                st.markdown("### 📊 Tarihsel Verim & Enflasyon Karşılaştırması")
-                df_tablo = hesapla_gecmis_performans(data, curr, ana_para, kur_val, s)
-                st.table(df_tablo)
-                st.caption("Not: Reel Getiri hesaplanırken ortalama küresel enflasyon etkisi varsayılmıştır.")
-                
+                render_performance_panel(
+                    data=data,
+                    current_price=curr,
+                    investment_amount=ana_para,
+                    currency_rate=kur_val,
+                    currency_symbol=s,
+                )
+
     except Exception as e:
         st.error(f"Sistem Hatası: Veri çekilirken veya işlenirken bir sorun oluştu. Detay: {e}")
         st.info("Lütfen internet bağlantınızı ve girdiğiniz parametreleri kontrol edin.")
