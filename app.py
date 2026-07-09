@@ -1,5 +1,4 @@
 import os
-import time
 
 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -11,11 +10,13 @@ from components.header import render_market_ticker
 from components.input_panel import render_input_panel
 from components.sidebar import render_sidebar_header
 from core.startup import initialize_application
+from core.session import initialize_analysis_state, render_analysis_button
 from components.footer import render_action_footer
 from components.analysis_panel import render_analysis_panel
 from components.consensus_panel import render_consensus_panel
 from components.news_panel import render_news_panel
 from components.performance_panel import render_performance_panel
+from components.progress import AnalysisProgress, render_analysis_error
 from components.tabs import create_main_tabs
 from services.cache_service import (
     get_cached_asset_history,
@@ -47,38 +48,43 @@ sembol = inputs.market_symbol
 st.divider()
 
 
-if "analiz_tamam" not in st.session_state:
-    st.session_state.analiz_tamam = False
-
-if st.button("🚀 Kurumsal Gelişmiş AI Projeksiyonunu Başlat", use_container_width=True, type="primary"):
-    st.session_state.analiz_tamam = True
+initialize_analysis_state()
+render_analysis_button()
 
 if st.session_state.analiz_tamam:
-    progress_text = "Veriler işleniyor, kantitatif modeller çalıştırılıyor..."
-    my_bar = st.progress(0, text=progress_text)
-    
+    progress = AnalysisProgress()
+
     try:
         data = get_cached_asset_history(sembol)
-        my_bar.progress(30, text="Finansal geçmiş yüklendi.")
-        
-        if data is not None and not data.empty:
-            curr = float(data['Close'].iloc[-1])
+        progress.update(30, "Finansal geçmiş yüklendi.")
+
+        if data is None or data.empty:
+            progress.close()
+            st.warning(
+                "Seçilen varlık için geçerli piyasa verisi bulunamadı."
+            )
+        else:
+            curr = float(data["Close"].iloc[-1])
             haberler = get_cached_news(
                 secilen_varlik.split("(")[0]
             )
-            my_bar.progress(50, text="Monte Carlo simülasyonları ve ML rota optimizasyonu tamamlanıyor...")
-            
-            gelecek = gelecek_senaryolari_hesapla(
-                data=data, curr=curr, ana_para=ana_para, periyot_gun=hedef_gun, kur_val=kur_val
+            progress.update(
+                50,
+                "Monte Carlo simülasyonları ve ML rota optimizasyonu tamamlanıyor...",
             )
-            my_bar.progress(80, text="Risk metrikleri hesaplanıyor...")
-            
-            # Üst Menü (Tabs)
+
+            gelecek = gelecek_senaryolari_hesapla(
+                data=data,
+                curr=curr,
+                ana_para=ana_para,
+                periyot_gun=hedef_gun,
+                kur_val=kur_val,
+            )
+            progress.update(80, "Risk metrikleri hesaplanıyor...")
+
             tabs = create_main_tabs()
-            my_bar.progress(100, text="Tamamlandı.")
-            time.sleep(0.5)
-            my_bar.empty()
-            
+            progress.complete()
+
             with tabs[0]:
                 render_analysis_panel(
                     data=data,
@@ -109,8 +115,8 @@ if st.session_state.analiz_tamam:
                     currency_symbol=s,
                 )
 
-    except Exception as e:
-        st.error(f"Sistem Hatası: Veri çekilirken veya işlenirken bir sorun oluştu. Detay: {e}")
-        st.info("Lütfen internet bağlantınızı ve girdiğiniz parametreleri kontrol edin.")
+    except Exception as exc:
+        progress.close()
+        render_analysis_error(exc)
 
 render_action_footer()
