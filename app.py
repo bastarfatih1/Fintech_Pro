@@ -27,35 +27,53 @@ from finans_motoru import (
     gelecek_senaryolari_hesapla,
 )
 
-initialize_application()
-render_market_ticker()
-render_sidebar_header()
+def render_analysis_tabs(
+    data,
+    news_items,
+    inputs,
+    current_price,
+    forecast_data,
+) -> None:
+    """Analiz sonuçlarını dört ana sekmede gösterir."""
+    tabs = create_main_tabs()
+
+    with tabs[0]:
+        render_analysis_panel(
+            data=data,
+            asset_name=inputs.asset_name,
+            current_price=current_price,
+            currency_rate=inputs.currency_rate,
+            forecast_data=forecast_data,
+        )
+
+    with tabs[1]:
+        render_consensus_panel(
+            forecast_data=forecast_data,
+            last_date=data.index[-1],
+        )
+
+    with tabs[2]:
+        render_news_panel(
+            news_items=news_items,
+            asset_name=inputs.asset_name,
+        )
+
+    with tabs[3]:
+        render_performance_panel(
+            data=data,
+            current_price=current_price,
+            investment_amount=inputs.investment_amount,
+            currency_rate=inputs.currency_rate,
+            currency_symbol=inputs.currency_symbol,
+        )
 
 
-
-kurlar = get_cached_currencies()
-
-inputs = render_input_panel(kurlar)
-
-ana_para = inputs.investment_amount
-secilen_kur = inputs.currency_code
-secilen_varlik = inputs.asset_name
-hedef_gun = inputs.forecast_days
-s = inputs.currency_symbol
-kur_val = inputs.currency_rate
-sembol = inputs.market_symbol
-
-st.divider()
-
-
-initialize_analysis_state()
-render_analysis_button()
-
-if st.session_state.analiz_tamam:
+def run_analysis(inputs) -> None:
+    """Seçilen varlık için veri, tahmin ve panel akışını çalıştırır."""
     progress = AnalysisProgress()
 
     try:
-        data = get_cached_asset_history(sembol)
+        data = get_cached_asset_history(inputs.market_symbol)
         progress.update(30, "Finansal geçmiş yüklendi.")
 
         if data is None or data.empty:
@@ -63,60 +81,62 @@ if st.session_state.analiz_tamam:
             st.warning(
                 "Seçilen varlık için geçerli piyasa verisi bulunamadı."
             )
-        else:
-            curr = float(data["Close"].iloc[-1])
-            haberler = get_cached_news(
-                secilen_varlik.split("(")[0]
-            )
-            progress.update(
-                50,
-                "Monte Carlo simülasyonları ve ML rota optimizasyonu tamamlanıyor...",
-            )
+            return
 
-            gelecek = gelecek_senaryolari_hesapla(
-                data=data,
-                curr=curr,
-                ana_para=ana_para,
-                periyot_gun=hedef_gun,
-                kur_val=kur_val,
-            )
-            progress.update(80, "Risk metrikleri hesaplanıyor...")
+        current_price = float(data["Close"].iloc[-1])
 
-            tabs = create_main_tabs()
-            progress.complete()
+        news_items = get_cached_news(
+            inputs.asset_name.split("(")[0]
+        )
 
-            with tabs[0]:
-                render_analysis_panel(
-                    data=data,
-                    asset_name=secilen_varlik,
-                    current_price=curr,
-                    currency_rate=kur_val,
-                    forecast_data=gelecek,
-                )
+        progress.update(
+            50,
+            "Monte Carlo simülasyonları ve ML rota optimizasyonu tamamlanıyor...",
+        )
 
-            with tabs[1]:
-                render_consensus_panel(
-                    forecast_data=gelecek,
-                    last_date=data.index[-1],
-                )
+        forecast_data = gelecek_senaryolari_hesapla(
+            data=data,
+            curr=current_price,
+            ana_para=inputs.investment_amount,
+            periyot_gun=inputs.forecast_days,
+            kur_val=inputs.currency_rate,
+        )
 
-            with tabs[2]:
-                render_news_panel(
-                    news_items=haberler,
-                    asset_name=secilen_varlik,
-                )
+        progress.update(80, "Risk metrikleri hesaplanıyor...")
+        progress.complete()
 
-            with tabs[3]:
-                render_performance_panel(
-                    data=data,
-                    current_price=curr,
-                    investment_amount=ana_para,
-                    currency_rate=kur_val,
-                    currency_symbol=s,
-                )
+        render_analysis_tabs(
+            data=data,
+            news_items=news_items,
+            inputs=inputs,
+            current_price=current_price,
+            forecast_data=forecast_data,
+        )
 
     except Exception as exc:
         progress.close()
         render_analysis_error(exc)
 
-render_action_footer()
+
+def main() -> None:
+    """Streamlit uygulamasının ana çalışma akışı."""
+    initialize_application()
+    render_market_ticker()
+    render_sidebar_header()
+
+    currencies = get_cached_currencies()
+    inputs = render_input_panel(currencies)
+
+    st.divider()
+
+    initialize_analysis_state()
+    render_analysis_button()
+
+    if st.session_state.analiz_tamam:
+        run_analysis(inputs)
+
+    render_action_footer()
+
+
+if __name__ == "__main__":
+    main()
