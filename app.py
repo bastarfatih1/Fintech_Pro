@@ -9,7 +9,6 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import yfinance as yf
 from plotly.subplots import make_subplots
 from components.header import render_market_ticker
 from components.sidebar import render_sidebar_header
@@ -19,6 +18,11 @@ from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.metrics import render_risk_metrics
 from components.tabs import create_main_tabs
+from services.cache_service import (
+    get_cached_asset_history,
+    get_cached_currencies,
+    get_cached_news,
+)
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
     get_kurlar,
@@ -28,7 +32,7 @@ from haber_motoru import (
     ai_etki_analizi,
     ai_teknik_analiz_yorumu,
     ai_toplu_model_yorumlari,
-    canli_rss_haber_cek,
+    
 )
 
 initialize_application()
@@ -36,11 +40,8 @@ render_market_ticker()
 render_sidebar_header()
 
 
-@st.cache_data(ttl=900)
-def kurlari_getir_cache():
-    return get_kurlar()
 
-kurlar = kurlari_getir_cache()
+kurlar = get_cached_currencies()
 
 # Ana Parametreler
 col_g1, col_g2, col_g3, col_g4 = st.columns([2, 1, 1, 1])
@@ -68,13 +69,6 @@ kur_val = kurlar.get(secilen_kur, 1.0)
 
 st.divider()
 
-@st.cache_data(ttl=600)
-def haberleri_getir_cache(kelime):
-    return canli_rss_haber_cek(kelime)
-
-@st.cache_data(ttl=3600)
-def varlik_verisi_getir(sembol):
-    return yf.Ticker(sembol).history(period="10y")
 
 if "analiz_tamam" not in st.session_state:
     st.session_state.analiz_tamam = False
@@ -89,12 +83,14 @@ if st.session_state.analiz_tamam:
     my_bar = st.progress(0, text=progress_text)
     
     try:
-        data = varlik_verisi_getir(sembol)
+        data = get_cached_asset_history(sembol)
         my_bar.progress(30, text="Finansal geçmiş yüklendi.")
         
         if data is not None and not data.empty:
             curr = float(data['Close'].iloc[-1])
-            haberler = haberleri_getir_cache(secilen_varlik.split("(")[0])
+            haberler = get_cached_news(
+    secilen_varlik.split("(")[0]
+)
             my_bar.progress(50, text="Monte Carlo simülasyonları ve ML rota optimizasyonu tamamlanıyor...")
             
             gelecek = gelecek_senaryolari_hesapla(
