@@ -17,6 +17,7 @@ from config.constants import CURRENCY_SYMBOLS
 from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
 from components.footer import render_action_footer
+from components.metrics import render_risk_metrics
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
     get_kurlar,
@@ -109,14 +110,8 @@ if st.session_state.analiz_tamam:
             with tabs[0]:
                 st.markdown(f"### 📡 {secilen_varlik} - Merkezi Terminal")
                 
-                # RİSK METRİKLERİ KARTLARI
                 stats = gelecek["stats"]
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("📉 Max Drawdown", f"%{stats['MaxDD']*100:.2f}")
-                c2.metric("🛡️ 95% VaR", f"%{stats['VaR']*100:.2f}")
-                c3.metric("⚖️ Sharpe Rasyosu", f"{stats['Sharpe']:.2f}")
-                c4.metric("⚖️ Sortino Rasyosu", f"{stats['Sortino']:.2f}")
-                c5.metric("🔗 Beta Katsayısı", f"{stats['Beta']:.2f}")
+                render_risk_metrics(stats)
                 
                 st.markdown("---") 
                 
