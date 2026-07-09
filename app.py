@@ -14,10 +14,10 @@ from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.analysis_panel import render_analysis_panel
+from components.consensus_panel import render_consensus_panel
 from components.news_panel import render_news_panel
 from components.performance_panel import render_performance_panel
 from components.tabs import create_main_tabs
-from charts.consensus import create_consensus_chart
 from services.cache_service import (
     get_cached_asset_history,
     get_cached_currencies,
@@ -103,25 +103,10 @@ if st.session_state.analiz_tamam:
                 )
 
             with tabs[1]:
-                st.markdown("### 🎯 Kurumsal Konsensüs & AI Projeksiyonu")
-
-                fig_gelecek = create_consensus_chart(
+                render_consensus_panel(
                     forecast_data=gelecek,
                     last_date=data.index[-1],
                 )
-
-                st.plotly_chart(
-                    fig_gelecek,
-                    use_container_width=True,
-                    config={
-                        "scrollZoom": True,
-                        "displaylogo": False,
-                        "responsive": True,
-                    },
-                )
-
-                st.markdown("#### Detaylı Gelecek Değerlemeleri")
-                st.table(gelecek["gelecek_df"])
 
             with tabs[2]:
                 render_news_panel(
