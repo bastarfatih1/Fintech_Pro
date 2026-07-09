@@ -18,6 +18,7 @@ from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
 from components.footer import render_action_footer
 from components.metrics import render_risk_metrics
+from components.tabs import create_main_tabs
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
     get_kurlar,
@@ -102,7 +103,7 @@ if st.session_state.analiz_tamam:
             my_bar.progress(80, text="Risk metrikleri hesaplanıyor...")
             
             # Üst Menü (Tabs)
-            tabs = st.tabs(["📊 Dashboard (Grafik & Risk)", "🔮 AI Forecast & Modeller", "📰 Haber Analizi", "📈 Performans"])
+            tabs = create_main_tabs()
             my_bar.progress(100, text="Tamamlandı.")
             time.sleep(0.5)
             my_bar.empty()
