@@ -13,13 +13,11 @@ from config.constants import CURRENCY_SYMBOLS
 from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
 from components.footer import render_action_footer
-from components.metrics import render_risk_metrics
+from components.analysis_panel import render_analysis_panel
 from components.news_panel import render_news_panel
 from components.performance_panel import render_performance_panel
 from components.tabs import create_main_tabs
-from charts.candlestick import create_price_volume_chart
 from charts.consensus import create_consensus_chart
-from charts.rsi import analyze_rsi
 from services.cache_service import (
     get_cached_asset_history,
     get_cached_currencies,
@@ -27,9 +25,6 @@ from services.cache_service import (
 )
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
-)
-from haber_motoru import (
-    ai_teknik_analiz_yorumu,
 )
 
 initialize_application()
@@ -99,42 +94,13 @@ if st.session_state.analiz_tamam:
             my_bar.empty()
             
             with tabs[0]:
-                st.markdown(f"### 📡 {secilen_varlik} - Merkezi Terminal")
-                
-                stats = gelecek["stats"]
-                render_risk_metrics(stats)
-                
-                st.markdown("---") 
-                
-                # RSI Uyarısı
-                rsi_result = analyze_rsi(data["Close"])
-
-                if rsi_result.status == "overbought":
-                    st.warning(f"⚠️ {rsi_result.message}")
-                elif rsi_result.status == "oversold":
-                    st.success(f"✅ {rsi_result.message}")
-                else:
-                    st.info(f"ℹ️ {rsi_result.message}")
-
-                fig_ana = create_price_volume_chart(
+                render_analysis_panel(
                     data=data,
-                    currency_rate=kur_val,
+                    asset_name=secilen_varlik,
                     current_price=curr,
-                    bear_target=gelecek["ayi"],
-                    bull_target=gelecek["boga"],
+                    currency_rate=kur_val,
+                    forecast_data=gelecek,
                 )
-
-                st.plotly_chart(
-                    fig_ana,
-                    use_container_width=True,
-                    config={
-                        "scrollZoom": True,
-                        "displaylogo": False,
-                        "responsive": True,
-                    },
-                )
-                
-                st.info(f"**🤖 AI Sentezi:** {ai_teknik_analiz_yorumu(secilen_varlik, curr, gelecek['boga'], gelecek['ayi'])}")
 
             with tabs[1]:
                 st.markdown("### 🎯 Kurumsal Konsensüs & AI Projeksiyonu")
