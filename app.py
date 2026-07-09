@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 from plotly.subplots import make_subplots
+from components.header import render_market_ticker
 
 from config.constants import CURRENCY_SYMBOLS
 from config.markets import FORECAST_PERIODS, INSTRUMENTS
@@ -29,9 +30,7 @@ from haber_motoru import (
 
 initialize_application()
 
-
-# Canlı Ticker
-st.markdown('<div class="ticker-bar"><marquee scrollamount="5">S&P 500: ▲ 5,420.20 (+0.4%) &nbsp;&nbsp;|&nbsp;&nbsp; NASDAQ: ▲ 17,215.30 (+0.6%) &nbsp;&nbsp;|&nbsp;&nbsp; BIST 100: ▼ 9,850.40 (-1.2%) &nbsp;&nbsp;|&nbsp;&nbsp; BTC/USD: ▲ 66,200 (+1.8%) &nbsp;&nbsp;|&nbsp;&nbsp; XAU/USD: ▲ 2,340 (+0.2%)</marquee></div>', unsafe_allow_html=True)
+render_market_ticker()
 
 # --- YAPAY ZEKA KONTROL PANELİ ---
 st.sidebar.title("🏛️ Terminal Kontrolü")
