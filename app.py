@@ -12,7 +12,8 @@ import numpy as np
 import streamlit as st
 import yfinance as yf
 import time
-
+from core.startup import initialize_application
+initialize_application()
 from finans_motoru import (
     get_kurlar, 
     hesapla_gecmis_performans, 
@@ -23,60 +24,14 @@ from haber_motoru import (
     ai_etki_analizi, 
     ai_teknik_analiz_yorumu,
     ai_toplu_model_yorumlari
+    
+    
 )
 
-# --- 1. AYARLAR VE TASARIM (Koyu Tema & Kurumsal) ---
-st.set_page_config(
-    page_title="Fintech Alpha Pro | Kurumsal Risk Terminali", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
-)
 
-st.markdown("""
-    <style>
-    /* Kurumsal Koyu Tema (Bloomberg Hissi) */
-    .stApp { background-color: #0B1020; }
-    
-    /* Canlı Ticker Bar */
-    .ticker-bar {
-        background: linear-gradient(90deg, #131a30 0%, #1c2541 50%, #131a30 100%);
-        color: #00bbff; padding: 10px; font-weight: bold; font-family: monospace;
-        border-bottom: 2px solid #233556; margin-bottom: 20px;
-    }
-    
-    /* Kart Gölgeleri ve Yüzeyler */
-    .kur-box { 
-        background: linear-gradient(145deg, #1a2238, #131a2f); 
-        padding: 15px; border-radius: 8px; text-align: center; 
-        border: 1px solid #233556; color: #ffffff !important; 
-        font-size: 18px; font-weight: 700; margin-bottom: 10px; 
-        box-shadow: 0px 4px 12px rgba(0,0,0,0.5);
-    }
-    .metric-up { color: #00ff88; font-weight: bold; }
-    .metric-down { color: #ff4d4d; font-weight: bold; }
-    
-    .news-card {
-        background-color: #131a30; padding: 18px; border-radius: 8px;
-        border: 1px solid #233556; margin-bottom: 15px;
-        box-shadow: 0px 4px 8px rgba(0,0,0,0.3); transition: 0.3s;
-    }
-    .news-card:hover { border-color: #00bbff; }
-    
-    /* Alt Sabit Menü (Action Buttons) */
-    .floating-action-bar {
-        position: fixed; bottom: 0; left: 0; width: 100%;
-        background-color: #0B1020; border-top: 1px solid #233556;
-        padding: 10px 50px; z-index: 999; display: flex; justify-content: space-around;
-    }
-    
-    div[data-testid="stMetric"] {
-        background: linear-gradient(145deg, #131a30, #0B1020);
-        border: 1px solid #233556; padding: 20px; border-radius: 8px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-    }
-    div[data-testid="stMetricValue"] { color: #00ff88; font-size: 1.8rem; font-weight: 800; }        
-    </style>
-""", unsafe_allow_html=True)
+
+initialize_application()
+
 
 # Canlı Ticker
 st.markdown('<div class="ticker-bar"><marquee scrollamount="5">S&P 500: ▲ 5,420.20 (+0.4%) &nbsp;&nbsp;|&nbsp;&nbsp; NASDAQ: ▲ 17,215.30 (+0.6%) &nbsp;&nbsp;|&nbsp;&nbsp; BIST 100: ▼ 9,850.40 (-1.2%) &nbsp;&nbsp;|&nbsp;&nbsp; BTC/USD: ▲ 66,200 (+1.8%) &nbsp;&nbsp;|&nbsp;&nbsp; XAU/USD: ▲ 2,340 (+0.2%)</marquee></div>', unsafe_allow_html=True)

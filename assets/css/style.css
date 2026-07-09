@@ -1,0 +1,89 @@
+/* Fintech Professional Terminal - Global Theme */
+
+.stApp {
+    background-color: #0B1020;
+}
+
+/* Canlı piyasa bandı */
+.ticker-bar {
+    background: linear-gradient(
+        90deg,
+        #131A30 0%,
+        #1C2541 50%,
+        #131A30 100%
+    );
+    color: #00BBFF;
+    padding: 10px;
+    font-weight: bold;
+    font-family: monospace;
+    border-bottom: 2px solid #233556;
+    margin-bottom: 20px;
+}
+
+/* Kur ve bilgi kutuları */
+.kur-box {
+    background: linear-gradient(145deg, #1A2238, #131A2F);
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid #233556;
+    color: #FFFFFF !important;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.metric-up {
+    color: #00FF88;
+    font-weight: bold;
+}
+
+.metric-down {
+    color: #FF4D4D;
+    font-weight: bold;
+}
+
+/* Haber kartları */
+.news-card {
+    background-color: #131A30;
+    padding: 18px;
+    border-radius: 8px;
+    border: 1px solid #233556;
+    margin-bottom: 15px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    transition: border-color 0.3s ease;
+}
+
+.news-card:hover {
+    border-color: #00BBFF;
+}
+
+/* Alt sabit işlem menüsü */
+.floating-action-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: #0B1020;
+    border-top: 1px solid #233556;
+    padding: 10px 50px;
+    z-index: 999;
+    display: flex;
+    justify-content: space-around;
+}
+
+/* Streamlit metrik kartları */
+div[data-testid="stMetric"] {
+    background: linear-gradient(145deg, #131A30, #0B1020);
+    border: 1px solid #233556;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+}
+
+div[data-testid="stMetricValue"] {
+    color: #00FF88;
+    font-size: 1.8rem;
+    font-weight: 800;
+}
