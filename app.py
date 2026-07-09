@@ -16,6 +16,7 @@ from components.sidebar import render_sidebar_header
 from config.constants import CURRENCY_SYMBOLS
 from config.markets import FORECAST_PERIODS, INSTRUMENTS
 from core.startup import initialize_application
+from components.footer import render_action_footer
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
     get_kurlar,
@@ -221,12 +222,4 @@ if st.session_state.analiz_tamam:
         st.error(f"Sistem Hatası: Veri çekilirken veya işlenirken bir sorun oluştu. Detay: {e}")
         st.info("Lütfen internet bağlantınızı ve girdiğiniz parametreleri kontrol edin.")
 
-# --- ALT SABİT AKSİYON MENÜSÜ ---
-st.markdown("""
-<div class="floating-action-bar">
-    <button style="background:transparent; border:none; color:white; font-size:16px;">🔄 Yenile</button>
-    <button style="background:transparent; border:none; color:white; font-size:16px;">⭐ İzleme Listesi</button>
-    <button style="background:transparent; border:none; color:white; font-size:16px;">📤 Rapor İndir</button>
-    <button style="background:transparent; border:none; color:#00bbff; font-weight:bold; font-size:16px;">🤖 AI Analiz Raporu</button>
-</div>
-""", unsafe_allow_html=True)
+render_action_footer()
