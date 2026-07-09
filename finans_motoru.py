@@ -7,6 +7,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from statsmodels.tsa.arima.model import ARIMA
+from risk.metrics import calculate_risk_metrics
 import yfinance as yf
 
 warnings.filterwarnings('ignore')
@@ -29,14 +30,75 @@ def get_kurlar():
             "RUB": 88.0, "SAR": 3.75, "KWD": 0.31, "JPY": 155.0
         }
 
-def volatile_path_generator(curr, target, days, daily_vol):
-    if days <= 1:
-        return np.array([target])
-    returns = np.random.normal(0, daily_vol, days)
-    returns = returns - np.mean(returns)
-    path = np.exp(np.cumsum(returns))
-    scaled_path = curr + (path - path[0]) * ((target - curr) / (path[-1] - path[0] + 1e-9))
-    return scaled_path
+def volatile_path_generator(
+    curr,
+    target,
+    days,
+    daily_vol,
+    random_state=42,
+):
+    """
+    Başlangıç fiyatından hedef fiyata kontrollü ve pozitif rota üretir.
+
+    Not:
+        Bu rota gerçek model tahmini değildir.
+        Yalnızca tek hedef fiyatın görselleştirilmesi içindir.
+    """
+    curr = float(curr)
+    target = float(target)
+    days = int(days)
+
+    if days <= 0:
+        return np.array([], dtype=float)
+
+    if curr <= 0:
+        raise ValueError("Başlangıç fiyatı pozitif olmalıdır.")
+
+    if not np.isfinite(target) or target <= 0:
+        target = curr
+
+    if days == 1:
+        return np.array([target], dtype=float)
+
+    rng = np.random.default_rng(random_state)
+
+    progress = np.linspace(0.0, 1.0, days)
+
+    base_path = curr * np.exp(
+        np.log(target / curr) * progress
+    )
+
+    noise = rng.normal(
+        loc=0.0,
+        scale=min(float(daily_vol), 0.05),
+        size=days,
+    )
+
+    noise[0] = 0.0
+    noise[-1] = 0.0
+
+    noise = np.cumsum(noise)
+    noise = noise - np.linspace(
+        noise[0],
+        noise[-1],
+        days,
+    )
+
+    path = base_path * np.exp(noise)
+
+    lower_limit = curr * 0.05
+    upper_limit = curr * 20.0
+
+    path = np.clip(
+        path,
+        lower_limit,
+        upper_limit,
+    )
+
+    path[0] = curr
+    path[-1] = target
+
+    return path
 
 def destek_direnc_bul(df, window=20):
     destek = df['Low'].rolling(window=window).min().iloc[-1]
@@ -168,15 +230,7 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         toplam_w += w
     konsensus_rota = base_path / toplam_w if toplam_w > 0 else np.full(periyot_gun, curr)
 
-    returns = np.diff(hist_prices) / hist_prices[:-1]
-    sharpe = float(np.mean(returns) / (np.std(returns) + 1e-9) * np.sqrt(252)) if len(returns) > 1 else 0.0
-    downside_returns = returns[returns < 0]
-    sortino_std = np.std(downside_returns) if len(downside_returns) > 0 else 1e-9
-    sortino = float(np.mean(returns) / sortino_std * np.sqrt(252)) if len(returns) > 1 else 0.0
-    var_95 = float(np.percentile(returns, 5)) if len(returns) > 1 else 0.0
-    cum_returns = np.cumprod(1 + returns)
-    peak = np.maximum.accumulate(cum_returns)
-    max_dd = float(np.min((cum_returns - peak) / (peak + 1e-9))) if len(cum_returns) > 1 else 0.0
+    risk_stats = calculate_risk_metrics(df["Close"])
     
     # DÜZELTİLMİŞ BETA HESAPLAMASI
     sp500_data = get_sp500_data(data.index[0], data.index[-1])
@@ -208,7 +262,10 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         "mc_upper": mc_upper * kur_val,
         "mc_lower": mc_lower * kur_val,
         "rotalar": {k: v * kur_val for k, v in rotalar.items()},
-        "stats": {"VaR": var_95, "Sharpe": sharpe, "Sortino": sortino, "MaxDD": max_dd, "Beta": beta},
+        "stats": {
+    **risk_stats,
+    "Beta": beta,
+},
         "gelecek_df": pd.DataFrame(gelecek_tablo),
         "boga": float(np.max(konsensus_rota) * kur_val),
         "ayi": float(np.min(konsensus_rota) * kur_val),
