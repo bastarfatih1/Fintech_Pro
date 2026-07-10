@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from risk.metrics import calculate_risk_metrics
 import yfinance as yf
 
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
 
 FALLBACK_CURRENCY_RATES = {
     "USD": 1.0,
@@ -171,11 +174,18 @@ def destek_direnc_bul(df, window=20):
     return destek, direnc
 
 def get_sp500_data(start_date, end_date):
+    """S&P 500 kapanış verisini güvenli şekilde getirir."""
     try:
-        sp500 = yf.download('^GSPC', start=start_date, end=end_date, progress=False)['Close']
+        sp500 = yf.download(
+            "^GSPC",
+            start=start_date,
+            end=end_date,
+            progress=False,
+        )["Close"]
         return sp500
-    except:
-        return pd.Series()
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        logger.warning("S&P 500 verisi alınamadı: %s", exc)
+        return pd.Series(dtype=float)
 
 def hesapla_gecmis_performans(data, curr, ana_para, kur_val, s):
     try:
@@ -231,69 +241,187 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         X_latest = np.zeros((1, len(features)))
         
     rotalar = {}
-    hist_prices = df['Close'].dropna().values
+    model_durumlari = {}
+
+    hist_prices = df["Close"].dropna().values
     log_returns = np.log(hist_prices[1:] / hist_prices[:-1])
     daily_vol = np.std(log_returns) if np.std(log_returns) > 0 else 0.01
 
-    try:
-        lr = LinearRegression()
-        lr.fit(train_df[features], train_df['Target'])
-        rotalar["Linear_Regression"] = volatile_path_generator(curr, float(lr.predict(X_latest)[0]), periyot_gun, daily_vol)
-    except:
-        rotalar["Linear_Regression"] = np.full(periyot_gun, curr)
+    if train_df.empty:
+        raise ValueError(
+            "Seçilen tahmin vadesi için yeterli eğitim verisi bulunamadı."
+        )
+
+    def kaydet_basarili_model(model_adi, rota):
+        """Başarılı model rotasını doğrular ve kaydeder."""
+        rota = np.asarray(rota, dtype=float).reshape(-1)
+
+        if len(rota) != periyot_gun:
+            raise ValueError(
+                f"{model_adi} rota uzunluğu beklenen vadeyle uyumlu değil."
+            )
+
+        if not np.isfinite(rota).all():
+            raise ValueError(
+                f"{model_adi} geçersiz sayısal değer üretti."
+            )
+
+        if np.any(rota <= 0):
+            raise ValueError(
+                f"{model_adi} sıfır veya negatif fiyat üretti."
+            )
+
+        rotalar[model_adi] = rota
+        model_durumlari[model_adi] = {
+            "durum": "başarılı",
+            "hata": None,
+        }
+
+    def kaydet_basarisiz_model(model_adi, hata):
+        """Başarısız modeli konsensüsten çıkarır ve hata bilgisini kaydeder."""
+        logger.warning("%s modeli başarısız: %s", model_adi, hata)
+        model_durumlari[model_adi] = {
+            "durum": "başarısız",
+            "hata": str(hata),
+        }
 
     try:
-        rf = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
-        rf.fit(train_df[features], train_df['Target'])
-        rotalar["Random_Forest"] = volatile_path_generator(curr, float(rf.predict(X_latest)[0]), periyot_gun, daily_vol)
-    except:
-        rotalar["Random_Forest"] = np.full(periyot_gun, curr)
+        lr = LinearRegression()
+        lr.fit(train_df[features], train_df["Target"])
+        lr_target = float(lr.predict(X_latest)[0])
+        kaydet_basarili_model(
+            "Linear_Regression",
+            volatile_path_generator(
+                curr,
+                lr_target,
+                periyot_gun,
+                daily_vol,
+                random_state=11,
+            ),
+        )
+    except (ValueError, TypeError, FloatingPointError) as exc:
+        kaydet_basarisiz_model("Linear_Regression", exc)
+
+    try:
+        rf = RandomForestRegressor(
+            n_estimators=50,
+            random_state=42,
+            n_jobs=-1,
+        )
+        rf.fit(train_df[features], train_df["Target"])
+        rf_target = float(rf.predict(X_latest)[0])
+        kaydet_basarili_model(
+            "Random_Forest",
+            volatile_path_generator(
+                curr,
+                rf_target,
+                periyot_gun,
+                daily_vol,
+                random_state=22,
+            ),
+        )
+    except (ValueError, TypeError, FloatingPointError) as exc:
+        kaydet_basarisiz_model("Random_Forest", exc)
 
     try:
         svr = SVR(C=1.0, epsilon=0.2)
-        svr.fit(train_df[features], train_df['Target'])
-        rotalar["SVR"] = volatile_path_generator(curr, float(svr.predict(X_latest)[0]), periyot_gun, daily_vol)
-    except:
-        rotalar["SVR"] = np.full(periyot_gun, curr)
+        svr.fit(train_df[features], train_df["Target"])
+        svr_target = float(svr.predict(X_latest)[0])
+        kaydet_basarili_model(
+            "SVR",
+            volatile_path_generator(
+                curr,
+                svr_target,
+                periyot_gun,
+                daily_vol,
+                random_state=33,
+            ),
+        )
+    except (ValueError, TypeError, FloatingPointError) as exc:
+        kaydet_basarisiz_model("SVR", exc)
 
     try:
-        xgb = XGBRegressor(n_estimators=50, random_state=42, n_jobs=-1)
-        xgb.fit(train_df[features], train_df['Target'])
-        rotalar["XGBoost"] = volatile_path_generator(curr, float(xgb.predict(X_latest)[0]), periyot_gun, daily_vol)
-    except:
-        rotalar["XGBoost"] = np.full(periyot_gun, curr)
+        xgb = XGBRegressor(
+            n_estimators=50,
+            random_state=42,
+            n_jobs=-1,
+        )
+        xgb.fit(train_df[features], train_df["Target"])
+        xgb_target = float(xgb.predict(X_latest)[0])
+        kaydet_basarili_model(
+            "XGBoost",
+            volatile_path_generator(
+                curr,
+                xgb_target,
+                periyot_gun,
+                daily_vol,
+                random_state=44,
+            ),
+        )
+    except (ValueError, TypeError, FloatingPointError) as exc:
+        kaydet_basarisiz_model("XGBoost", exc)
 
     try:
         arima_model = ARIMA(hist_prices, order=(1, 1, 1))
         arima_fit = arima_model.fit()
-        rotalar["ARIMA"] = arima_fit.forecast(steps=periyot_gun)
-    except:
-        rotalar["ARIMA"] = np.full(periyot_gun, curr)
+        kaydet_basarili_model(
+            "ARIMA",
+            arima_fit.forecast(steps=periyot_gun),
+        )
+    except (ValueError, TypeError, RuntimeError, FloatingPointError) as exc:
+        kaydet_basarisiz_model("ARIMA", exc)
 
     n_sim = 10000
+
     try:
+        rng = np.random.default_rng(55)
         mu = np.mean(log_returns)
-        Z = np.random.normal(0, 1, (n_sim, periyot_gun))
+        z_values = rng.normal(0, 1, (n_sim, periyot_gun))
         drift = mu - 0.5 * (daily_vol ** 2)
-        growth = np.exp(drift + daily_vol * Z)
+        growth = np.exp(drift + daily_vol * z_values)
         cum_growth = np.cumprod(growth, axis=1)
         mc_paths = curr * cum_growth
-        rotalar["Monte_Carlo"] = np.mean(mc_paths, axis=0)
+
+        monte_carlo_mean = np.mean(mc_paths, axis=0)
         mc_upper = np.percentile(mc_paths, 95, axis=0)
         mc_lower = np.percentile(mc_paths, 5, axis=0)
-    except:
-        rotalar["Monte_Carlo"] = np.full(periyot_gun, curr)
-        mc_upper = np.full(periyot_gun, curr)
-        mc_lower = np.full(periyot_gun, curr)
 
-    agirliklar = {"ARIMA": 0.20, "Monte_Carlo": 0.25, "Random_Forest": 0.20, "XGBoost": 0.15, "Linear_Regression": 0.10, "SVR": 0.10}
-    base_path = np.zeros(periyot_gun)
-    toplam_w = 0
-    for m_adi, m_pred in rotalar.items():
-        w = agirliklar.get(m_adi, 0.1)
-        base_path += np.array(m_pred) * w
-        toplam_w += w
-    konsensus_rota = base_path / toplam_w if toplam_w > 0 else np.full(periyot_gun, curr)
+        kaydet_basarili_model(
+            "Monte_Carlo",
+            monte_carlo_mean,
+        )
+    except (ValueError, TypeError, FloatingPointError, MemoryError) as exc:
+        kaydet_basarisiz_model("Monte_Carlo", exc)
+        mc_upper = np.full(periyot_gun, np.nan)
+        mc_lower = np.full(periyot_gun, np.nan)
+
+    if not rotalar:
+        raise RuntimeError(
+            "Tahmin modellerinin hiçbiri geçerli sonuç üretemedi."
+        )
+
+    agirliklar = {
+        "ARIMA": 0.20,
+        "Monte_Carlo": 0.25,
+        "Random_Forest": 0.20,
+        "XGBoost": 0.15,
+        "Linear_Regression": 0.10,
+        "SVR": 0.10,
+    }
+
+    base_path = np.zeros(periyot_gun, dtype=float)
+    toplam_w = 0.0
+
+    for model_adi, model_rotasi in rotalar.items():
+        agirlik = agirliklar.get(model_adi, 0.10)
+        base_path += model_rotasi * agirlik
+        toplam_w += agirlik
+
+    konsensus_rota = base_path / toplam_w
+
+    if "Monte_Carlo" not in rotalar:
+        mc_upper = konsensus_rota.copy()
+        mc_lower = konsensus_rota.copy()
 
     risk_stats = calculate_risk_metrics(df["Close"])
     
@@ -327,6 +455,7 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         "mc_upper": mc_upper * kur_val,
         "mc_lower": mc_lower * kur_val,
         "rotalar": {k: v * kur_val for k, v in rotalar.items()},
+        "model_durumlari": model_durumlari,
         "stats": {
             **risk_stats,
             "Beta": beta,
