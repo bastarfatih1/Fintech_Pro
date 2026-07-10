@@ -1,8 +1,9 @@
 """
-Konsensüs tahmin grafiği.
+Konsensüs ve kalibre senaryo grafiği.
 
-Bu modül Monte Carlo güven koridorunu, tekil model tahminlerini
-ve ağırlıklı konsensüs rotasını tek bir Plotly grafiğinde birleştirir.
+Bu modül model rotalarını, ağırlıklı baz senaryoyu ve
+backtest hatalarıyla kalibre edilmiş kötümser-iyimser
+senaryo bandını tek bir Plotly grafiğinde birleştirir.
 """
 
 from collections.abc import Mapping
@@ -34,9 +35,32 @@ def _to_one_dimensional_array(
         raise ValueError(f"{field_name} verisi boş olamaz.")
 
     if not np.isfinite(array).all():
-        raise ValueError(f"{field_name} içinde geçersiz sayısal değer var.")
+        raise ValueError(
+            f"{field_name} içinde geçersiz sayısal değer var."
+        )
 
     return array
+
+
+def _build_forecast_dates(
+    last_date: Any,
+    periods: int,
+    period_unit: str,
+) -> pd.DatetimeIndex:
+    """Tahmin eksenini işlem günü veya takvim günü olarak oluşturur."""
+    start_date = pd.Timestamp(last_date)
+
+    if str(period_unit).lower() == "işlem günü":
+        return pd.bdate_range(
+            start=start_date + pd.offsets.BDay(1),
+            periods=periods,
+        )
+
+    return pd.date_range(
+        start=start_date + pd.Timedelta(days=1),
+        periods=periods,
+        freq="D",
+    )
 
 
 def create_consensus_chart(
@@ -44,23 +68,16 @@ def create_consensus_chart(
     last_date: Any,
 ) -> go.Figure:
     """
-    Tahmin modellerini ve güven koridorunu tek grafikte gösterir.
+    Model rotalarını ve kalibre senaryo aralığını tek grafikte gösterir.
 
-    Args:
-        forecast_data: Konsensüs rotası, Monte Carlo bantları ve
-            model rotalarını içeren sözlük.
-        last_date: Tarihsel verideki son gözlem tarihi.
-
-    Returns:
-        Hazırlanmış Plotly konsensüs grafiği.
-
-    Raises:
-        ValueError: Gerekli alanlar eksik veya uzunluklar uyumsuzsa.
+    Gölge alan kesin bir fiyat garantisi değildir. Backtest hataları,
+    model dağılımı ve uygun olduğunda Monte Carlo aralığı kullanılarak
+    oluşturulan belirsizlik bandıdır.
     """
     required_keys = {
         "konsensus_rota",
-        "mc_upper",
-        "mc_lower",
+        "senaryo_alt",
+        "senaryo_ust",
         "rotalar",
     }
     missing_keys = required_keys.difference(forecast_data.keys())
@@ -75,26 +92,52 @@ def create_consensus_chart(
         forecast_data["konsensus_rota"],
         "konsensus_rota",
     )
-    mc_upper = _to_one_dimensional_array(
-        forecast_data["mc_upper"],
-        "mc_upper",
+    scenario_lower = _to_one_dimensional_array(
+        forecast_data["senaryo_alt"],
+        "senaryo_alt",
     )
-    mc_lower = _to_one_dimensional_array(
-        forecast_data["mc_lower"],
-        "mc_lower",
+    scenario_upper = _to_one_dimensional_array(
+        forecast_data["senaryo_ust"],
+        "senaryo_ust",
     )
 
     expected_length = len(consensus_path)
 
-    if len(mc_upper) != expected_length or len(mc_lower) != expected_length:
+    for field_name, values in (
+        ("senaryo_alt", scenario_lower),
+        ("senaryo_ust", scenario_upper),
+    ):
+        if len(values) != expected_length:
+            raise ValueError(
+                f"{field_name} konsensüs rotasıyla aynı uzunlukta olmalıdır."
+            )
+
+    if np.any(scenario_lower <= 0):
+        raise ValueError("Kötümser senaryo sıfır veya negatif olamaz.")
+
+    if np.any(scenario_lower > consensus_path):
         raise ValueError(
-            "Monte Carlo güven bantları konsensüs rotasıyla aynı uzunlukta olmalıdır."
+            "Kötümser senaryo baz senaryonun üzerinde olamaz."
         )
 
-    forecast_dates = pd.date_range(
-        start=pd.Timestamp(last_date) + pd.Timedelta(days=1),
+    if np.any(scenario_upper < consensus_path):
+        raise ValueError(
+            "İyimser senaryo baz senaryonun altında olamaz."
+        )
+
+    forecast_dates = _build_forecast_dates(
+        last_date=last_date,
         periods=expected_length,
-        freq="D",
+        period_unit=str(
+            forecast_data.get("vade_birimi", "işlem günü")
+        ),
+    )
+
+    confidence_method = str(
+        forecast_data.get(
+            "guven_araligi_yontemi",
+            "Backtest hatasıyla kalibre senaryo aralığı",
+        )
     )
 
     figure = go.Figure()
@@ -102,27 +145,37 @@ def create_consensus_chart(
     figure.add_trace(
         go.Scatter(
             x=forecast_dates,
-            y=mc_upper,
+            y=scenario_upper,
             mode="lines",
             line={"width": 0},
-            hoverinfo="skip",
+            hovertemplate=(
+                "İyimser sınır<br>"
+                "Tarih: %{x|%d.%m.%Y}<br>"
+                "Fiyat: %{y:,.2f}<extra></extra>"
+            ),
             showlegend=False,
-            name="Üst Güven Sınırı",
+            name="İyimser Senaryo",
         )
     )
 
     figure.add_trace(
         go.Scatter(
             x=forecast_dates,
-            y=mc_lower,
+            y=scenario_lower,
             mode="lines",
             fill="tonexty",
-            fillcolor="rgba(0, 187, 255, 0.12)",
+            fillcolor="rgba(0, 187, 255, 0.14)",
             line={"width": 0},
-            name="%90 Monte Carlo Güven Koridoru",
+            name="Kalibre Senaryo Aralığı",
+            customdata=np.column_stack(
+                (scenario_lower, scenario_upper)
+            ),
             hovertemplate=(
+                "Senaryo aralığı<br>"
                 "Tarih: %{x|%d.%m.%Y}<br>"
-                "Alt sınır: %{y:,.2f}<extra></extra>"
+                "Kötümser: %{customdata[0]:,.2f}<br>"
+                "İyimser: %{customdata[1]:,.2f}"
+                "<extra></extra>"
             ),
         )
     )
@@ -130,7 +183,14 @@ def create_consensus_chart(
     model_paths = forecast_data["rotalar"]
 
     if not isinstance(model_paths, Mapping):
-        raise ValueError("rotalar alanı sözlük benzeri bir yapı olmalıdır.")
+        raise ValueError(
+            "rotalar alanı sözlük benzeri bir yapı olmalıdır."
+        )
+
+    route_types = forecast_data.get("rota_turleri", {})
+
+    if not isinstance(route_types, Mapping):
+        route_types = {}
 
     color_index = 0
 
@@ -145,11 +205,30 @@ def create_consensus_chart(
 
         if len(model_path) != expected_length:
             raise ValueError(
-                f"{model_name} rotasının uzunluğu konsensüs rotasıyla uyumlu değil."
+                f"{model_name} rotasının uzunluğu "
+                "konsensüs rotasıyla uyumlu değil."
             )
 
-        display_name = str(model_name).replace("_", " ").upper()
-        color = MODEL_COLORS[color_index % len(MODEL_COLORS)]
+        route_type = str(
+            route_types.get(
+                model_name,
+                "Model Tahmin Rotası",
+            )
+        )
+        is_visual_route = route_type.lower().startswith("görsel")
+
+        base_display_name = (
+            str(model_name).replace("_", " ").upper()
+        )
+        display_name = (
+            f"{base_display_name} · GÖRSEL ROTA"
+            if is_visual_route
+            else base_display_name
+        )
+
+        color = MODEL_COLORS[
+            color_index % len(MODEL_COLORS)
+        ]
         color_index += 1
 
         figure.add_trace(
@@ -160,14 +239,21 @@ def create_consensus_chart(
                 name=display_name,
                 line={
                     "color": color,
-                    "width": 1.4,
-                    "dash": "dash",
+                    "width": 1.3,
+                    "dash": "dot" if is_visual_route else "dash",
                 },
-                opacity=0.78,
+                opacity=0.65 if is_visual_route else 0.78,
+                customdata=np.full(
+                    expected_length,
+                    route_type,
+                    dtype=object,
+                ),
                 hovertemplate=(
-                    f"{display_name}<br>"
+                    f"{base_display_name}<br>"
                     "Tarih: %{x|%d.%m.%Y}<br>"
-                    "Tahmin: %{y:,.2f}<extra></extra>"
+                    "Değer: %{y:,.2f}<br>"
+                    "Tür: %{customdata}"
+                    "<extra></extra>"
                 ),
             )
         )
@@ -177,23 +263,23 @@ def create_consensus_chart(
             x=forecast_dates,
             y=consensus_path,
             mode="lines",
-            name="🎯 AĞIRLIKLI KONSENSÜS",
+            name="BAZ SENARYO · AĞIRLIKLI KONSENSÜS",
             line={
                 "color": "#00FF88",
                 "width": 4,
             },
             hovertemplate=(
-                "Konsensüs<br>"
+                "Baz senaryo<br>"
                 "Tarih: %{x|%d.%m.%Y}<br>"
-                "Tahmin: %{y:,.2f}<extra></extra>"
+                "Fiyat: %{y:,.2f}<extra></extra>"
             ),
         )
     )
 
     figure.update_layout(
         template="plotly_dark",
-        height=560,
-        margin={"l": 0, "r": 0, "t": 30, "b": 0},
+        height=580,
+        margin={"l": 0, "r": 0, "t": 55, "b": 0},
         hovermode="x unified",
         dragmode="pan",
         legend={
@@ -203,8 +289,26 @@ def create_consensus_chart(
             "xanchor": "left",
             "x": 0,
         },
-        xaxis_title="Tahmin Tarihi",
-        yaxis_title="Tahmini Fiyat",
+        xaxis_title="Yaklaşık İşlem Tarihi",
+        yaxis_title="Senaryo Fiyatı",
+        annotations=[
+            {
+                "text": (
+                    "Gölge alan kesin fiyat garantisi değildir. "
+                    + confidence_method
+                ),
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0,
+                "y": -0.17,
+                "showarrow": False,
+                "align": "left",
+                "font": {
+                    "size": 11,
+                    "color": "#A0A0A0",
+                },
+            }
+        ],
     )
 
     figure.update_xaxes(

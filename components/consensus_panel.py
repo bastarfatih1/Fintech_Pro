@@ -1,8 +1,8 @@
 """
 Konsensüs tahmin paneli.
 
-Bu bileşen konsensüs grafiğini ve
-gelecek değerlemeleri tablosunu gösterir.
+Bu bileşen kalibre senaryo grafiğini, model ağırlıklarını,
+gelecek değerlemelerini ve backtest sonuçlarını gösterir.
 """
 
 from typing import Any, Mapping
@@ -16,6 +16,36 @@ from charts.consensus import create_consensus_chart
 def _format_model_name(model_name: str) -> str:
     """Teknik model adını kullanıcı dostu biçime dönüştürür."""
     return str(model_name).replace("_", " ").title()
+
+
+def _render_projection_notice(
+    forecast_data: Mapping[str, Any],
+) -> None:
+    """Projeksiyonun niteliğini ve güven aralığı yöntemini açıklar."""
+    projection_notice = str(
+        forecast_data.get(
+            "projeksiyon_bildirimi",
+            (
+                "Sonuçlar olasılıksal senaryolardır; "
+                "kesin gelecek fiyatı değildir."
+            ),
+        )
+    )
+    confidence_method = str(
+        forecast_data.get(
+            "guven_araligi_yontemi",
+            "Backtest hatalarıyla kalibre senaryo aralığı",
+        )
+    )
+
+    st.info(
+        "ℹ️ " + projection_notice
+    )
+    st.caption(
+        "Senaryo bandı yöntemi: "
+        + confidence_method
+        + ". Gölge alan yatırım sonucu garantisi değildir."
+    )
 
 
 def _render_model_statuses(
@@ -55,7 +85,7 @@ def _render_model_statuses(
     col_success, col_failed, col_total = st.columns(3)
 
     col_success.metric(
-        "Konsensüse Katılan",
+        "Çalışan Model",
         successful_count,
     )
     col_failed.metric(
@@ -73,7 +103,7 @@ def _render_model_statuses(
             for name in successful_models
         )
         st.success(
-            "Konsensüse katılan modeller: "
+            "Geçerli rota üreten modeller: "
             + readable_names
         )
 
@@ -87,7 +117,6 @@ def _render_model_statuses(
                     f"**{_format_model_name(model_name)}**"
                 )
                 st.caption(error_message)
-
 
 
 def _render_model_weights(
@@ -110,6 +139,9 @@ def _render_model_weights(
             backtest_lookup[model_name] = {
                 "RMSE": row.get("RMSE"),
                 "Yön Doğruluğu %": row.get("Yön Doğruluğu %"),
+                "Stabilite Skoru": row.get("Stabilite Skoru"),
+                "RMSE İyileşme %": row.get("RMSE İyileşme %"),
+                "Referansı Geçti": row.get("Referansı Geçti", ""),
                 "Durum": row.get("Durum", ""),
             }
 
@@ -131,6 +163,14 @@ def _render_model_weights(
             backtest_info.get("Yön Doğruluğu %"),
             errors="coerce",
         )
+        stability_value = pd.to_numeric(
+            backtest_info.get("Stabilite Skoru"),
+            errors="coerce",
+        )
+        improvement_value = pd.to_numeric(
+            backtest_info.get("RMSE İyileşme %"),
+            errors="coerce",
+        )
 
         rows.append(
             {
@@ -141,16 +181,29 @@ def _render_model_weights(
                     if pd.notna(rmse_value)
                     else None
                 ),
+                "RMSE İyileşme %": (
+                    round(float(improvement_value), 1)
+                    if pd.notna(improvement_value)
+                    else None
+                ),
                 "Yön Doğruluğu %": (
                     round(float(direction_value), 1)
                     if pd.notna(direction_value)
                     else None
                 ),
+                "Stabilite Skoru": (
+                    round(float(stability_value), 1)
+                    if pd.notna(stability_value)
+                    else None
+                ),
+                "Referansı Geçti": str(
+                    backtest_info.get(
+                        "Referansı Geçti",
+                        "Bilinmiyor",
+                    )
+                ),
                 "Konsensüse Katılıyor": (
                     "Evet" if weight > 0 else "Hayır"
-                ),
-                "Backtest Durumu": str(
-                    backtest_info.get("Durum", "Kapsam Dışı")
                 ),
             }
         )
@@ -169,7 +222,6 @@ def _render_model_weights(
     total_weight = float(
         weight_table["Konsensüs Ağırlığı %"].sum()
     )
-
     active_count = int(
         (weight_table["Konsensüse Katılıyor"] == "Evet").sum()
     )
@@ -191,12 +243,68 @@ def _render_model_weights(
     )
 
     st.caption(
-        "Ağırlıklar backtest RMSE ve yön doğruluğuna göre "
-        "dinamik olarak hesaplanır. ARIMA ve Monte Carlo henüz "
-        "aynı backtest kapsamına alınmadığı için kontrollü temel "
-        "ağırlık kullanabilir."
+        "Ağırlıklar RMSE, yön doğruluğu, stabilite ve "
+        "Naive Last Price referans modelini geçme koşuluna göre "
+        "hesaplanır. Referansı geçemeyen model ağırlık alamaz."
     )
 
+
+def _render_future_values(
+    future_table: Any,
+) -> None:
+    """Gelecek senaryo tablosunu okunur sütun sırasıyla gösterir."""
+    st.markdown("#### Detaylı Gelecek Senaryoları")
+
+    if future_table is None:
+        st.info("Gelecek senaryoları bulunamadı.")
+        return
+
+    if not isinstance(future_table, pd.DataFrame):
+        st.warning(
+            "Gelecek senaryoları beklenen tablo biçiminde değil."
+        )
+        return
+
+    if future_table.empty:
+        st.info("Gelecek senaryoları bulunamadı.")
+        return
+
+    display_table = future_table.copy()
+
+    preferred_columns = (
+        "Vade",
+        "Kötümser Senaryo",
+        "Baz Senaryo",
+        "İyimser Senaryo",
+        "Kötümser Getiri %",
+        "Nominal Getiri %",
+        "İyimser Getiri %",
+        "Sermaye Karşılığı",
+        "Tahmin",
+    )
+
+    visible_columns = [
+        column
+        for column in preferred_columns
+        if column in display_table.columns
+    ]
+
+    remaining_columns = [
+        column
+        for column in display_table.columns
+        if column not in visible_columns
+    ]
+
+    st.dataframe(
+        display_table[visible_columns + remaining_columns],
+        hide_index=True,
+    )
+
+    st.caption(
+        "Baz senaryo ağırlıklı model konsensüsüdür. "
+        "Kötümser ve iyimser değerler geçmiş backtest hatalarıyla "
+        "kalibre edilmiş belirsizlik sınırlarıdır."
+    )
 
 
 def _render_backtest_results(
@@ -206,12 +314,13 @@ def _render_backtest_results(
     """Backtest sonuçlarını özetler ve tablo halinde gösterir."""
     st.markdown("#### 🧪 Geçmiş Performans Testi")
 
-    if str(backtest_status).lower() != "tamamlandı":
+    status_text = str(backtest_status)
+
+    if status_text.lower() != "tamamlandı":
         st.warning(
-            "Backtest tamamlanamadı: "
-            + str(backtest_status)
+            "Backtest durumu: "
+            + status_text
         )
-        return
 
     if not isinstance(backtest_table, pd.DataFrame):
         st.warning(
@@ -223,91 +332,115 @@ def _render_backtest_results(
         st.info("Gösterilecek backtest sonucu bulunamadı.")
         return
 
+    required_columns = {"Model", "Durum"}
+
+    if not required_columns.issubset(backtest_table.columns):
+        st.warning(
+            "Backtest tablosunda gerekli alanlar bulunamadı."
+        )
+        return
+
     successful = backtest_table[
-        backtest_table["Durum"] == "Başarılı"
+        backtest_table["Durum"].astype(str).str.lower() == "başarılı"
     ].copy()
 
-    if successful.empty:
+    evaluated_models = successful[
+        successful["Model"] != "Naive_Last_Price"
+    ].copy()
+
+    if "Referansı Geçti" in evaluated_models.columns:
+        benchmark_winners = evaluated_models[
+            evaluated_models["Referansı Geçti"]
+            .astype(str)
+            .str.lower()
+            == "evet"
+        ].copy()
+    else:
+        benchmark_winners = evaluated_models.copy()
+
+    if evaluated_models.empty:
         st.warning(
-            "Backtest çalıştı ancak hiçbir model geçerli sonuç üretemedi."
+            "Backtest çalıştı ancak değerlendirilecek model sonucu yok."
         )
     else:
-        successful["RMSE"] = pd.to_numeric(
-            successful["RMSE"],
+        evaluated_models["RMSE"] = pd.to_numeric(
+            evaluated_models["RMSE"],
             errors="coerce",
         )
-        successful["Yön Doğruluğu %"] = pd.to_numeric(
-            successful["Yön Doğruluğu %"],
+        evaluated_models["Yön Doğruluğu %"] = pd.to_numeric(
+            evaluated_models["Yön Doğruluğu %"],
             errors="coerce",
         )
 
-        best_rmse_row = successful.loc[
-            successful["RMSE"].idxmin()
-        ]
-        best_direction_row = successful.loc[
-            successful["Yön Doğruluğu %"].idxmax()
-        ]
+        valid_rmse = evaluated_models.dropna(subset=["RMSE"])
+        valid_direction = evaluated_models.dropna(
+            subset=["Yön Doğruluğu %"]
+        )
 
         col_count, col_rmse, col_direction = st.columns(3)
 
         col_count.metric(
-            "Testi Geçen Model",
-            len(successful),
-        )
-        col_rmse.metric(
-            "En Düşük RMSE",
-            f"{best_rmse_row['RMSE']:,.2f}",
-            help=(
-                "RMSE ne kadar düşükse modelin fiyat tahmini "
-                "genel olarak o kadar başarılıdır."
-            ),
-        )
-        col_direction.metric(
-            "En İyi Yön Doğruluğu",
-            f"%{best_direction_row['Yön Doğruluğu %']:.1f}",
-            help=(
-                "Modelin yükseliş veya düşüş yönünü doğru "
-                "tahmin etme oranıdır."
-            ),
+            "Referansı Geçen Model",
+            len(benchmark_winners),
         )
 
-        st.caption(
-            "En düşük RMSE: "
-            f"{_format_model_name(best_rmse_row['Model'])} | "
-            "En yüksek yön doğruluğu: "
-            f"{_format_model_name(best_direction_row['Model'])}"
-        )
+        if not valid_rmse.empty:
+            best_rmse_row = valid_rmse.loc[
+                valid_rmse["RMSE"].idxmin()
+            ]
+            col_rmse.metric(
+                "En Düşük Model RMSE",
+                f"{best_rmse_row['RMSE']:,.2f}",
+            )
+        else:
+            col_rmse.metric("En Düşük Model RMSE", "-")
+
+        if not valid_direction.empty:
+            best_direction_row = valid_direction.loc[
+                valid_direction["Yön Doğruluğu %"].idxmax()
+            ]
+            col_direction.metric(
+                "En İyi Yön Doğruluğu",
+                (
+                    f"%{best_direction_row['Yön Doğruluğu %']:.1f}"
+                ),
+            )
+        else:
+            col_direction.metric("En İyi Yön Doğruluğu", "-")
 
     display_table = backtest_table.copy()
 
-    for column in ("MAE", "RMSE"):
+    for column, decimals in (
+        ("MAE", 2),
+        ("RMSE", 2),
+        ("RMSE Sapması", 2),
+        ("Referans RMSE", 2),
+        ("RMSE İyileşme %", 1),
+        ("Yön Doğruluğu %", 1),
+        ("Yön Sapması", 1),
+        ("Stabilite Skoru", 1),
+        ("Konsensüs Ağırlığı %", 2),
+    ):
         if column in display_table.columns:
             display_table[column] = pd.to_numeric(
                 display_table[column],
                 errors="coerce",
-            ).round(2)
-
-    if "Yön Doğruluğu %" in display_table.columns:
-        display_table["Yön Doğruluğu %"] = pd.to_numeric(
-            display_table["Yön Doğruluğu %"],
-            errors="coerce",
-        ).round(1)
-
-    if "Konsensüs Ağırlığı %" in display_table.columns:
-        display_table["Konsensüs Ağırlığı %"] = pd.to_numeric(
-            display_table["Konsensüs Ağırlığı %"],
-            errors="coerce",
-        ).round(2)
+            ).round(decimals)
 
     visible_columns = [
         column
         for column in (
             "Model",
-            "MAE",
             "RMSE",
+            "Referans RMSE",
+            "RMSE İyileşme %",
+            "Referansı Geçti",
             "Yön Doğruluğu %",
+            "Stabilite Skoru",
             "Konsensüs Ağırlığı %",
+            "Test Penceresi",
             "Test Gözlemi",
+            "Backtest Türü",
             "Durum",
         )
         if column in display_table.columns
@@ -319,7 +452,8 @@ def _render_backtest_results(
     )
 
     failed = backtest_table[
-        backtest_table["Durum"] == "Başarısız"
+        backtest_table["Durum"].astype(str).str.lower()
+        == "başarısız"
     ]
 
     if not failed.empty and "Hata" in failed.columns:
@@ -334,32 +468,25 @@ def _render_backtest_results(
                 st.caption(str(row["Hata"]))
 
 
-
-
 def render_consensus_panel(
     forecast_data: Mapping[str, Any],
     last_date: Any,
 ) -> None:
-    """
-    Konsensüs sekmesinin tamamını oluşturur.
-
-    Args:
-        forecast_data: Tahmin rotaları, güven bantları ve
-            gelecek tablosunu içeren sözlük.
-        last_date: Tarihsel verideki son gözlem tarihi.
-    """
-    st.markdown("### 🎯 Kurumsal Konsensüs & AI Projeksiyonu")
+    """Konsensüs ve senaryo sekmesinin tamamını oluşturur."""
+    st.markdown("### 🎯 Model Konsensüsü & Senaryo Projeksiyonu")
 
     required_keys = {
         "konsensus_rota",
-        "mc_upper",
-        "mc_lower",
+        "senaryo_alt",
+        "senaryo_ust",
         "rotalar",
         "model_durumlari",
         "model_agirliklari",
         "backtest_df",
         "backtest_status",
         "gelecek_df",
+        "projeksiyon_bildirimi",
+        "guven_araligi_yontemi",
     }
     missing_keys = required_keys.difference(forecast_data.keys())
 
@@ -369,6 +496,8 @@ def render_consensus_panel(
             + ", ".join(sorted(missing_keys))
         )
         return
+
+    _render_projection_notice(forecast_data)
 
     _render_model_statuses(
         forecast_data["model_durumlari"]
@@ -384,7 +513,11 @@ def render_consensus_panel(
             forecast_data=forecast_data,
             last_date=last_date,
         )
-    except Exception as exc:
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as exc:
         st.error(
             "Konsensüs grafiği oluşturulamadı. "
             f"Detay: {exc}"
@@ -399,21 +532,9 @@ def render_consensus_panel(
             },
         )
 
-    st.markdown("#### Detaylı Gelecek Değerlemeleri")
-
-    future_table = forecast_data["gelecek_df"]
-
-    if future_table is None:
-        st.info("Gelecek değerlemeleri bulunamadı.")
-    elif isinstance(future_table, pd.DataFrame):
-        if future_table.empty:
-            st.info("Gelecek değerlemeleri bulunamadı.")
-        else:
-            st.table(future_table)
-    else:
-        st.warning(
-            "Gelecek değerlemeleri beklenen tablo biçiminde değil."
-        )
+    _render_future_values(
+        forecast_data["gelecek_df"]
+    )
 
     _render_backtest_results(
         backtest_table=forecast_data["backtest_df"],
