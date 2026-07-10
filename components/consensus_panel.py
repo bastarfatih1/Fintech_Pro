@@ -89,6 +89,116 @@ def _render_model_statuses(
                 st.caption(error_message)
 
 
+
+def _render_model_weights(
+    model_weights: Mapping[str, Any],
+    backtest_table: Any,
+) -> None:
+    """Dinamik konsensüs ağırlıklarını model bazında gösterir."""
+    st.markdown("#### ⚖️ Dinamik Model Ağırlıkları")
+
+    if not isinstance(model_weights, Mapping) or not model_weights:
+        st.info("Gösterilecek model ağırlığı bulunamadı.")
+        return
+
+    backtest_lookup = {}
+
+    if isinstance(backtest_table, pd.DataFrame) and not backtest_table.empty:
+        for _, row in backtest_table.iterrows():
+            model_name = str(row.get("Model", ""))
+
+            backtest_lookup[model_name] = {
+                "RMSE": row.get("RMSE"),
+                "Yön Doğruluğu %": row.get("Yön Doğruluğu %"),
+                "Durum": row.get("Durum", ""),
+            }
+
+    rows = []
+
+    for model_name, raw_weight in model_weights.items():
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError):
+            weight = 0.0
+
+        backtest_info = backtest_lookup.get(str(model_name), {})
+
+        rmse_value = pd.to_numeric(
+            backtest_info.get("RMSE"),
+            errors="coerce",
+        )
+        direction_value = pd.to_numeric(
+            backtest_info.get("Yön Doğruluğu %"),
+            errors="coerce",
+        )
+
+        rows.append(
+            {
+                "Model": _format_model_name(model_name),
+                "Konsensüs Ağırlığı %": round(weight * 100.0, 2),
+                "RMSE": (
+                    round(float(rmse_value), 2)
+                    if pd.notna(rmse_value)
+                    else None
+                ),
+                "Yön Doğruluğu %": (
+                    round(float(direction_value), 1)
+                    if pd.notna(direction_value)
+                    else None
+                ),
+                "Konsensüse Katılıyor": (
+                    "Evet" if weight > 0 else "Hayır"
+                ),
+                "Backtest Durumu": str(
+                    backtest_info.get("Durum", "Kapsam Dışı")
+                ),
+            }
+        )
+
+    weight_table = pd.DataFrame(rows)
+
+    if weight_table.empty:
+        st.info("Gösterilecek model ağırlığı bulunamadı.")
+        return
+
+    weight_table = weight_table.sort_values(
+        by="Konsensüs Ağırlığı %",
+        ascending=False,
+    ).reset_index(drop=True)
+
+    total_weight = float(
+        weight_table["Konsensüs Ağırlığı %"].sum()
+    )
+
+    active_count = int(
+        (weight_table["Konsensüse Katılıyor"] == "Evet").sum()
+    )
+
+    col_total, col_active = st.columns(2)
+
+    col_total.metric(
+        "Toplam Ağırlık",
+        f"%{total_weight:.2f}",
+    )
+    col_active.metric(
+        "Ağırlık Alan Model",
+        active_count,
+    )
+
+    st.dataframe(
+        weight_table,
+        hide_index=True,
+    )
+
+    st.caption(
+        "Ağırlıklar backtest RMSE ve yön doğruluğuna göre "
+        "dinamik olarak hesaplanır. ARIMA ve Monte Carlo henüz "
+        "aynı backtest kapsamına alınmadığı için kontrollü temel "
+        "ağırlık kullanabilir."
+    )
+
+
+
 def _render_backtest_results(
     backtest_table: Any,
     backtest_status: Any,
@@ -183,6 +293,12 @@ def _render_backtest_results(
             errors="coerce",
         ).round(1)
 
+    if "Konsensüs Ağırlığı %" in display_table.columns:
+        display_table["Konsensüs Ağırlığı %"] = pd.to_numeric(
+            display_table["Konsensüs Ağırlığı %"],
+            errors="coerce",
+        ).round(2)
+
     visible_columns = [
         column
         for column in (
@@ -190,6 +306,7 @@ def _render_backtest_results(
             "MAE",
             "RMSE",
             "Yön Doğruluğu %",
+            "Konsensüs Ağırlığı %",
             "Test Gözlemi",
             "Durum",
         )
@@ -239,6 +356,7 @@ def render_consensus_panel(
         "mc_lower",
         "rotalar",
         "model_durumlari",
+        "model_agirliklari",
         "backtest_df",
         "backtest_status",
         "gelecek_df",
@@ -254,6 +372,11 @@ def render_consensus_panel(
 
     _render_model_statuses(
         forecast_data["model_durumlari"]
+    )
+
+    _render_model_weights(
+        model_weights=forecast_data["model_agirliklari"],
+        backtest_table=forecast_data["backtest_df"],
     )
 
     try:
