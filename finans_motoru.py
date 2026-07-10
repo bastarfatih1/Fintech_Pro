@@ -12,6 +12,7 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from statsmodels.tsa.arima.model import ARIMA
 from risk.metrics import calculate_risk_metrics
+from forecast.backtest import evaluate_regression_models
 import yfinance as yf
 
 warnings.filterwarnings('ignore')
@@ -252,6 +253,29 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
             "Seçilen tahmin vadesi için yeterli eğitim verisi bulunamadı."
         )
 
+    try:
+        backtest_df = evaluate_regression_models(
+            data=train_df,
+            features=features,
+            target_column="Target",
+            reference_column="Close",
+        )
+        backtest_status = "tamamlandı"
+    except ValueError as exc:
+        logger.warning("Backtest çalıştırılamadı: %s", exc)
+        backtest_df = pd.DataFrame(
+            columns=[
+                "Model",
+                "MAE",
+                "RMSE",
+                "Yön Doğruluğu %",
+                "Test Gözlemi",
+                "Durum",
+                "Hata",
+            ]
+        )
+        backtest_status = str(exc)
+
     def kaydet_basarili_model(model_adi, rota):
         """Başarılı model rotasını doğrular ve kaydeder."""
         rota = np.asarray(rota, dtype=float).reshape(-1)
@@ -456,6 +480,8 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         "mc_lower": mc_lower * kur_val,
         "rotalar": {k: v * kur_val for k, v in rotalar.items()},
         "model_durumlari": model_durumlari,
+        "backtest_df": backtest_df,
+        "backtest_status": backtest_status,
         "stats": {
             **risk_stats,
             "Beta": beta,
