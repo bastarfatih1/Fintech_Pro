@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from core.market_calendar import normalize_asset_type
-from finans_motoru import get_kurlar
+from finans_motoru import get_kurlar, get_kurlar_with_metadata
 from haber_motoru import canli_rss_haber_cek
 from services.data_provider import get_market_history
 
@@ -28,6 +28,22 @@ def get_cached_currencies() -> dict[str, float]:
         Para birimi kodlarını ve kurlarını içeren sözlük.
     """
     return get_kurlar()
+
+
+@st.cache_data(ttl=900)
+def get_cached_currencies_with_metadata() -> dict[str, Any]:
+    """
+    Döviz kurlarını kaynak bilgisiyle birlikte 15 dakika önbellekte tutar.
+
+    Returns:
+        rates ve metadata alanlarını içeren sözlük.
+    """
+    result = get_kurlar_with_metadata()
+
+    return {
+        "rates": result.rates,
+        "metadata": result.metadata,
+    }
 
 
 @st.cache_data(ttl=600)

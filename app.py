@@ -21,7 +21,7 @@ from components.progress import AnalysisProgress, render_analysis_error
 from components.tabs import create_main_tabs
 from services.cache_service import (
     get_cached_asset_history_with_metadata,
-    get_cached_currencies,
+    get_cached_currencies_with_metadata,
     get_cached_news,
 )
 from finans_motoru import (
@@ -58,6 +58,44 @@ def render_data_source_notice(metadata) -> None:
         st.success(message)
     else:
         st.warning(message)
+
+    if note:
+        st.caption(note)
+
+
+
+def render_currency_source_notice(metadata) -> None:
+    """Döviz kuru kaynağını ve fallback durumunu kullanıcıya gösterir."""
+    if metadata is None:
+        return
+
+    source_name = getattr(metadata, "source_name", "Bilinmiyor")
+    provider_type = getattr(metadata, "provider_type", "Bilinmiyor")
+    license_status = getattr(metadata, "license_status", "Bilinmiyor")
+    is_production_allowed = bool(
+        getattr(metadata, "is_production_allowed", False)
+    )
+    fallback_used = bool(getattr(metadata, "fallback_used", False))
+    data_delay = getattr(metadata, "data_delay", "Bilinmiyor")
+    note = getattr(metadata, "note", "")
+
+    production_label = "Evet" if is_production_allowed else "Hayır"
+    fallback_label = "Evet" if fallback_used else "Hayır"
+    provider_label = str(provider_type).title()
+
+    message = (
+        f"💱 Kur kaynağı: {source_name} | "
+        f"Durum: {provider_label} | "
+        f"Fallback: {fallback_label} | "
+        f"Üretime uygun: {production_label} | "
+        f"Lisans: {license_status} | "
+        f"Güncellik: {data_delay}"
+    )
+
+    if fallback_used or not is_production_allowed:
+        st.warning(message)
+    else:
+        st.success(message)
 
     if note:
         st.caption(note)
@@ -173,8 +211,12 @@ def main() -> None:
     render_market_ticker()
     render_sidebar_header()
 
-    currencies = get_cached_currencies()
+    currency_result = get_cached_currencies_with_metadata()
+    currencies = currency_result.get("rates", {})
+    currency_metadata = currency_result.get("metadata")
+
     inputs = render_input_panel(currencies)
+    render_currency_source_notice(currency_metadata)
 
     st.divider()
 

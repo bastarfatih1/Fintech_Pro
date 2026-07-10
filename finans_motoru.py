@@ -1,6 +1,8 @@
 import logging
+from dataclasses import dataclass
 import os
 from pathlib import Path
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -37,6 +39,71 @@ FALLBACK_CURRENCY_RATES = {
 }
 
 
+@dataclass(frozen=True)
+class CurrencyDataMetadata:
+    """Döviz kuru sonucunun kaynak ve lisans bilgisini taşır."""
+
+    source_name: str
+    provider_type: str
+    base_currency: str
+    retrieved_at: datetime
+    data_delay: str
+    license_status: str
+    is_production_allowed: bool
+    fallback_used: bool = False
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class CurrencyDataResult:
+    """Döviz kurları ve kaynak bilgisini birlikte taşır."""
+
+    rates: dict[str, float]
+    metadata: CurrencyDataMetadata
+
+
+def _build_currency_metadata(
+    source_name: str,
+    provider_type: str,
+    data_delay: str,
+    license_status: str,
+    is_production_allowed: bool,
+    fallback_used: bool = False,
+    note: str = "",
+) -> CurrencyDataMetadata:
+    """Döviz kuru metadata nesnesini standart biçimde oluşturur."""
+    return CurrencyDataMetadata(
+        source_name=source_name,
+        provider_type=provider_type,
+        base_currency="USD",
+        retrieved_at=datetime.now(timezone.utc),
+        data_delay=data_delay,
+        license_status=license_status,
+        is_production_allowed=is_production_allowed,
+        fallback_used=fallback_used,
+        note=note,
+    )
+
+
+def _fallback_currency_result(note: str) -> CurrencyDataResult:
+    """Güvenli yedek kur tablosunu metadata ile birlikte döndürür."""
+    metadata = _build_currency_metadata(
+        source_name="Fallback currency table",
+        provider_type="fallback",
+        data_delay="Güncel piyasa verisi değildir",
+        license_status="Sabit yedek değer / üretim için uygun değil",
+        is_production_allowed=False,
+        fallback_used=True,
+        note=note,
+    )
+
+    return CurrencyDataResult(
+        rates=FALLBACK_CURRENCY_RATES.copy(),
+        metadata=metadata,
+    )
+
+
+
 def _load_local_env() -> None:
     """
     Proje kökündeki .env dosyasını ek paket gerektirmeden yükler.
@@ -65,9 +132,9 @@ def _load_local_env() -> None:
 _load_local_env()
 
 
-def get_kurlar():
+def get_kurlar_with_metadata() -> CurrencyDataResult:
     """
-    Güncel döviz kurlarını getirir.
+    Güncel döviz kurlarını kaynak bilgisiyle birlikte getirir.
 
     API anahtarı EXCHANGE_RATE_API_KEY ortam değişkeninden okunur.
     Anahtar yoksa veya istek başarısız olursa güvenli yedek değerler döner.
@@ -75,7 +142,9 @@ def get_kurlar():
     api_key = os.getenv("EXCHANGE_RATE_API_KEY", "").strip()
 
     if not api_key:
-        return FALLBACK_CURRENCY_RATES.copy()
+        return _fallback_currency_result(
+            "EXCHANGE_RATE_API_KEY bulunamadı. Sabit yedek kur tablosu kullanıldı."
+        )
 
     url = (
         "https://v6.exchangerate-api.com/v6/"
@@ -90,9 +159,11 @@ def get_kurlar():
         rates = payload.get("conversion_rates", {})
 
         if not rates:
-            return FALLBACK_CURRENCY_RATES.copy()
+            return _fallback_currency_result(
+                "ExchangeRate-API yanıtında conversion_rates alanı boş geldi."
+            )
 
-        return {
+        selected_rates = {
             "USD": 1.0,
             "TRY": rates.get("TRY", FALLBACK_CURRENCY_RATES["TRY"]),
             "EUR": rates.get("EUR", FALLBACK_CURRENCY_RATES["EUR"]),
@@ -102,8 +173,47 @@ def get_kurlar():
             "KWD": rates.get("KWD", FALLBACK_CURRENCY_RATES["KWD"]),
             "JPY": rates.get("JPY", FALLBACK_CURRENCY_RATES["JPY"]),
         }
-    except (requests.RequestException, ValueError, TypeError):
-        return FALLBACK_CURRENCY_RATES.copy()
+
+        metadata = _build_currency_metadata(
+            source_name="ExchangeRate-API",
+            provider_type="api",
+            data_delay=str(
+                payload.get(
+                    "time_last_update_utc",
+                    "API yanıt zamanı belirtilmedi",
+                )
+            ),
+            license_status=(
+                "API planı ve ticari kullanım koşulları üretim öncesi "
+                "doğrulanmalıdır"
+            ),
+            is_production_allowed=False,
+            fallback_used=False,
+            note=(
+                "Döviz kuru verisi API üzerinden alındı. Ticari sürümde "
+                "sağlayıcı planı, kota ve lisans koşulları ayrıca kontrol edilmelidir."
+            ),
+        )
+
+        return CurrencyDataResult(
+            rates=selected_rates,
+            metadata=metadata,
+        )
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        return _fallback_currency_result(
+            f"ExchangeRate-API çağrısı başarısız oldu. Sabit yedek kur tablosu kullanıldı. Hata: {exc}"
+        )
+
+
+def get_kurlar():
+    """
+    Güncel döviz kurlarını getirir.
+
+    Geriye uyumluluk için sadece kur sözlüğü döndürür.
+    Kaynak ve lisans bilgisi gereken yerlerde get_kurlar_with_metadata()
+    kullanılmalıdır.
+    """
+    return get_kurlar_with_metadata().rates
 
 def volatile_path_generator(
     curr,
