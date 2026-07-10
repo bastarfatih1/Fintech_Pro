@@ -16,6 +16,156 @@ from components.metrics import render_risk_metrics
 from haber_motoru import ai_teknik_analiz_yorumu
 
 
+
+def _inject_premium_summary_style() -> None:
+    """Analiz özetine premium terminal görünümü verir."""
+    st.markdown(
+        """
+        <style>
+        .fp-hero {
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 22px;
+            padding: 22px 24px;
+            margin: 10px 0 18px 0;
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.22), transparent 34%),
+                radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.16), transparent 30%),
+                linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(17, 24, 39, 0.92));
+            box-shadow: 0 18px 48px rgba(2, 6, 23, 0.28);
+        }
+        .fp-eyebrow {
+            color: #93c5fd;
+            font-size: 0.78rem;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        .fp-title {
+            color: #f8fafc;
+            font-size: 1.48rem;
+            font-weight: 850;
+            margin-bottom: 6px;
+        }
+        .fp-subtitle {
+            color: #cbd5e1;
+            font-size: 0.95rem;
+            line-height: 1.55;
+            max-width: 920px;
+        }
+        .fp-pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+        .fp-pill {
+            border: 1px solid rgba(226, 232, 240, 0.18);
+            border-radius: 999px;
+            padding: 6px 10px;
+            color: #e2e8f0;
+            background: rgba(15, 23, 42, 0.48);
+            font-size: 0.78rem;
+        }
+        .fp-card {
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            border-radius: 18px;
+            padding: 15px 16px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025));
+            min-height: 122px;
+        }
+        .fp-card-label {
+            color: #94a3b8;
+            font-size: 0.78rem;
+            font-weight: 700;
+            margin-bottom: 7px;
+        }
+        .fp-card-value {
+            color: #f8fafc;
+            font-size: 1.30rem;
+            font-weight: 850;
+            line-height: 1.18;
+        }
+        .fp-card-delta-positive {
+            color: #86efac;
+            font-size: 0.82rem;
+            margin-top: 8px;
+            font-weight: 750;
+        }
+        .fp-card-delta-negative {
+            color: #fca5a5;
+            font-size: 0.82rem;
+            margin-top: 8px;
+            font-weight: 750;
+        }
+        .fp-card-delta-neutral {
+            color: #cbd5e1;
+            font-size: 0.82rem;
+            margin-top: 8px;
+            font-weight: 750;
+        }
+        .fp-status {
+            border-left: 4px solid #38bdf8;
+            border-radius: 14px;
+            padding: 12px 14px;
+            background: rgba(14, 165, 233, 0.10);
+            color: #e2e8f0;
+            line-height: 1.55;
+            margin-top: 14px;
+        }
+        .fp-mini-note {
+            color: #94a3b8;
+            font-size: 0.78rem;
+            margin-top: 10px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _format_money(value: float) -> str:
+    """Büyük sayıları sade ve etkileyici biçimde gösterir."""
+    value = float(value)
+
+    if abs(value) >= 1_000_000_000:
+        return f"{value / 1_000_000_000:,.2f}B"
+    if abs(value) >= 1_000_000:
+        return f"{value / 1_000_000:,.2f}M"
+    if abs(value) >= 1_000:
+        return f"{value:,.2f}"
+
+    return f"{value:.2f}"
+
+
+def _get_return_tone(value: float) -> str:
+    """Getiriye göre HTML sınıfı belirler."""
+    if value > 2:
+        return "fp-card-delta-positive"
+    if value < -2:
+        return "fp-card-delta-negative"
+    return "fp-card-delta-neutral"
+
+
+def _get_insight_badge(
+    risk_level: str,
+    confidence: float,
+    nominal_return: float,
+) -> str:
+    """Özet için kullanıcıyı yakalayan kısa durum rozeti üretir."""
+    if confidence >= 70 and nominal_return > 5 and risk_level != "Yüksek":
+        return "Güçlü model uyumu"
+    if confidence < 40:
+        return "Düşük güven modu"
+    if risk_level == "Yüksek":
+        return "Yüksek risk radarı"
+    if nominal_return > 5:
+        return "Pozitif senaryo"
+    if nominal_return < -5:
+        return "Defansif görünüm"
+    return "Nötr izleme modu"
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     """Sayısal değeri güvenli şekilde float'a çevirir."""
     try:
@@ -186,7 +336,7 @@ def _render_professional_summary(
     currency_rate: float,
     forecast_data: Mapping[str, Any],
 ) -> None:
-    """Analiz sonucunu kısa ve kullanıcı dostu özet kartlarıyla gösterir."""
+    """Analiz sonucunu premium terminal tarzı bir özetle gösterir."""
     summary_row = _get_primary_horizon_row(forecast_data)
 
     if not summary_row:
@@ -217,42 +367,104 @@ def _render_professional_summary(
         upper_target=upper_target,
         confidence=confidence,
     )
+    badge = _get_insight_badge(
+        risk_level=risk_level,
+        confidence=confidence,
+        nominal_return=nominal_return,
+    )
 
-    st.markdown("#### 📌 Profesyonel Analiz Özeti")
+    band_width = 0.0
+    if current_display > 0:
+        band_width = ((upper_target - lower_target) / current_display) * 100.0
+
+    _inject_premium_summary_style()
+
+    st.markdown(
+        f"""
+        <div class="fp-hero">
+            <div class="fp-eyebrow">Fintech Pro Intelligence Layer</div>
+            <div class="fp-title">📌 Profesyonel Analiz Özeti</div>
+            <div class="fp-subtitle">
+                Model konsensüsü, backtest kalitesi, risk profili ve senaryo aralığı
+                tek ekranda okunabilir bir karar paneline dönüştürüldü.
+            </div>
+            <div class="fp-pill-row">
+                <div class="fp-pill">🎯 {horizon}</div>
+                <div class="fp-pill">🧠 Model Güveni %{confidence:.1f}</div>
+                <div class="fp-pill">🛡️ Risk: {risk_level}</div>
+                <div class="fp-pill">✨ {badge}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     col_price, col_base, col_range = st.columns(3)
 
-    col_price.metric(
-        "Güncel Fiyat",
-        f"{current_display:,.2f}",
-    )
-    col_base.metric(
-        f"Baz Senaryo ({horizon})",
-        f"{base_target:,.2f}",
-        delta=f"{nominal_return:+.2f}%",
-    )
-    col_range.metric(
-        "Senaryo Aralığı",
-        f"{lower_target:,.2f} - {upper_target:,.2f}",
-    )
+    with col_price:
+        st.markdown(
+            f"""
+            <div class="fp-card">
+                <div class="fp-card-label">Güncel Fiyat</div>
+                <div class="fp-card-value">{_format_money(current_display)}</div>
+                <div class="fp-card-delta-neutral">Canlı veri üzerinden hesaplandı</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col_base:
+        delta_class = _get_return_tone(nominal_return)
+        st.markdown(
+            f"""
+            <div class="fp-card">
+                <div class="fp-card-label">Baz Senaryo · {horizon}</div>
+                <div class="fp-card-value">{_format_money(base_target)}</div>
+                <div class="{delta_class}">{nominal_return:+.2f}% model getirisi</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col_range:
+        st.markdown(
+            f"""
+            <div class="fp-card">
+                <div class="fp-card-label">Kalibre Senaryo Aralığı</div>
+                <div class="fp-card-value">{_format_money(lower_target)} - {_format_money(upper_target)}</div>
+                <div class="fp-card-delta-neutral">Bant genişliği: %{band_width:.1f}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     col_risk, col_confidence = st.columns(2)
 
-    col_risk.metric(
-        "Risk Seviyesi",
-        risk_level,
-    )
-    col_confidence.metric(
-        "Model Güveni",
-        f"%{confidence:.1f}",
-    )
+    with col_risk:
+        st.metric(
+            "Risk Seviyesi",
+            risk_level,
+        )
 
-    st.caption(
-        "Genel durum: "
-        + general_status
-        + " Bu özet yatırım tavsiyesi değildir; yalnızca model çıktısını sadeleştirir."
-    )
+    with col_confidence:
+        st.metric(
+            "Model Güveni",
+            f"%{confidence:.1f}",
+        )
 
+    st.markdown(
+        f"""
+        <div class="fp-status">
+            <strong>Genel durum:</strong> {general_status}
+            <br/>
+            <span class="fp-mini-note">
+                Bu alan yatırım tavsiyesi değildir; yalnızca model çıktısını,
+                risk görünümünü ve belirsizliği sadeleştirir.
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_rsi_status(close_prices: pd.Series) -> None:
