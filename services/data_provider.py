@@ -12,7 +12,7 @@ Sprint 3.13B kapsamı:
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 import pandas as pd
 
@@ -56,6 +56,8 @@ class MarketDataProvider(Protocol):
         symbol: str,
         period: str = "10y",
         asset_type: str = "stock",
+        start_date: Optional[Any] = None,
+        end_date: Optional[Any] = None,
     ) -> MarketDataResult:
         """Geçmiş OHLCV piyasa verisini döndürür."""
 
@@ -75,6 +77,8 @@ class YahooFinancePrototypeProvider:
         symbol: str,
         period: str = "10y",
         asset_type: str = "stock",
+        start_date: Optional[Any] = None,
+        end_date: Optional[Any] = None,
     ) -> MarketDataResult:
         """
         Yahoo Finance sembolü için geçmiş OHLCV verisini getirir.
@@ -85,7 +89,15 @@ class YahooFinancePrototypeProvider:
         try:
             import yfinance as yf
 
-            data = yf.Ticker(symbol).history(period=period)
+            ticker = yf.Ticker(symbol)
+
+            if start_date is not None or end_date is not None:
+                data = ticker.history(
+                    start=start_date,
+                    end=end_date,
+                )
+            else:
+                data = ticker.history(period=period)
 
             if data is None:
                 data = pd.DataFrame()
@@ -132,13 +144,18 @@ def get_market_history(
     symbol: str,
     period: str = "10y",
     asset_type: str = "stock",
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
     provider: Optional[MarketDataProvider] = None,
 ) -> MarketDataResult:
     """
     Piyasa verisini seçili sağlayıcıdan alır.
 
-    Bu yardımcı fonksiyon, cache katmanının ileride tek satırla
+    Bu yardımcı fonksiyon, cache katmanının ve beta hesabının
     provider mimarisine bağlanmasını kolaylaştırır.
+
+    period verilirse dönem bazlı veri alınır.
+    start_date / end_date verilirse tarih aralığı bazlı veri alınır.
     """
     selected_provider = provider or get_default_market_data_provider()
 
@@ -146,4 +163,6 @@ def get_market_history(
         symbol=symbol,
         period=period,
         asset_type=asset_type,
+        start_date=start_date,
+        end_date=end_date,
     )

@@ -13,13 +13,13 @@ from xgboost import XGBRegressor
 from statsmodels.tsa.arima.model import ARIMA
 from risk.metrics import calculate_risk_metrics
 from core.market_calendar import get_market_calendar_config
+from services.data_provider import get_market_history
 from forecast.backtest import (
     calculate_dynamic_model_weights,
     calculate_weighted_calibration_error,
     evaluate_arima_and_monte_carlo,
     evaluate_regression_models,
 )
-import yfinance as yf
 
 warnings.filterwarnings('ignore')
 
@@ -296,15 +296,25 @@ def destek_direnc_bul(df, window=20):
     return destek, direnc
 
 def get_sp500_data(start_date, end_date):
-    """S&P 500 kapanış verisini güvenli şekilde getirir."""
+    """
+    S&P 500 kapanış verisini provider katmanı üzerinden güvenli şekilde getirir.
+
+    Beta hesabı için kullanılan ^GSPC verisi artık doğrudan yfinance ile
+    çekilmez. Böylece ileride lisanslı veya farklı bir endeks sağlayıcısına
+    geçiş tek provider katmanından yapılabilir.
+    """
     try:
-        sp500 = yf.download(
-            "^GSPC",
-            start=start_date,
-            end=end_date,
-            progress=False,
-        )["Close"]
-        return sp500
+        result = get_market_history(
+            symbol="^GSPC",
+            asset_type="index",
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        if result.is_empty or "Close" not in result.data.columns:
+            return pd.Series(dtype=float)
+
+        return result.data["Close"]
     except (KeyError, TypeError, ValueError, RuntimeError) as exc:
         logger.warning("S&P 500 verisi alınamadı: %s", exc)
         return pd.Series(dtype=float)
