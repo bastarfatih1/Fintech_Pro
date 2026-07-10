@@ -12,6 +12,7 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from statsmodels.tsa.arima.model import ARIMA
 from risk.metrics import calculate_risk_metrics
+from core.market_calendar import get_market_calendar_config
 from forecast.backtest import (
     calculate_dynamic_model_weights,
     calculate_weighted_calibration_error,
@@ -337,7 +338,19 @@ def hesapla_gecmis_performans(data, curr, ana_para, kur_val, s):
     except Exception:
         return pd.DataFrame([{"Dönem": "Veri Yok", "Eski Fiyat": "-", "Güncel Fiyat": "-", "Nominal Getiri": "-", "Reel Getiri": "-", "Sermaye Değeri": "-"}])
 
-def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
+def gelecek_senaryolari_hesapla(
+    data,
+    periyot_gun,
+    ana_para,
+    curr,
+    kur_val=1.0,
+    asset_type=None,
+    market_symbol=None,
+):
+    calendar_config = get_market_calendar_config(
+        asset_type=asset_type,
+        market_symbol=market_symbol,
+    )
     df = data.copy()
     df['Lag_1'] = df['Close'].shift(1)
     df['Lag_2'] = df['Close'].shift(2)
@@ -675,16 +688,7 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
             beta = float(cov_matrix[0, 1] / (cov_matrix[1, 1] + 1e-9))
 
     gelecek_tablo = []
-    periyotlar = [
-        ("1 İşlem Günü", 1),
-        ("1 Hafta", 5),
-        ("1 Ay", 21),
-        ("3 Ay", 63),
-        ("6 Ay", 126),
-        ("1 Yıl", 252),
-        ("2 Yıl", 504),
-        ("5 Yıl", 1260),
-    ]
+    periyotlar = calendar_config.horizons
     for l, d in periyotlar:
         if d <= periyot_gun:
             alt_native = float(senaryo_alt_rota[d - 1])
@@ -761,9 +765,20 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
             "Vade sonu hedefleri ve ARIMA/Monte Carlo yolları ayrı "
             "değerlendirilmelidir. Kötümser ve iyimser senaryo bantları "
             "backtest hataları, tarihsel volatilite ve uygun olduğunda "
-            "Monte Carlo dağılımıyla kalibre edilir."
+            "Monte Carlo dağılımıyla kalibre edilir. "
+            f"Takvim standardı: {calendar_config.calendar_name}."
         ),
-        "vade_birimi": "işlem günü",
+        "varlik_turu": calendar_config.asset_type,
+        "varlik_turu_etiketi": calendar_config.display_name,
+        "market_symbol": str(market_symbol or ""),
+        "vade_birimi": calendar_config.period_unit,
+        "takvim_frekansi": calendar_config.date_frequency,
+        "takvim_adi": calendar_config.calendar_name,
+        "takvim_aciklamasi": calendar_config.calendar_note,
+        "vade_standardlari": [
+            {"etiket": etiket, "periyot": gun}
+            for etiket, gun in calendar_config.horizons
+        ],
         "guven_araligi_yontemi": guven_araligi_yontemi,
         "kalibrasyon_log_hata_90": kalibrasyon_log_hata_90,
         "backtest_df": backtest_df,

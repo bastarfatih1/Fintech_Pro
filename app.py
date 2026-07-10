@@ -11,6 +11,7 @@ from components.input_panel import render_input_panel
 from components.sidebar import render_sidebar_header
 from core.startup import initialize_application
 from core.session import initialize_analysis_state, render_analysis_button
+from core.market_calendar import normalize_asset_type
 from components.footer import render_action_footer
 from components.analysis_panel import render_analysis_panel
 from components.consensus_panel import render_consensus_panel
@@ -85,6 +86,11 @@ def run_analysis(inputs) -> None:
 
         current_price = float(data["Close"].iloc[-1])
 
+        asset_type = normalize_asset_type(
+            asset_type=getattr(inputs, "asset_type", None),
+            market_symbol=inputs.market_symbol,
+        )
+
         news_items = get_cached_news(
             inputs.asset_name.split("(")[0]
         )
@@ -100,6 +106,8 @@ def run_analysis(inputs) -> None:
             ana_para=inputs.investment_amount,
             periyot_gun=inputs.forecast_days,
             kur_val=inputs.currency_rate,
+            asset_type=asset_type,
+            market_symbol=inputs.market_symbol,
         )
 
         progress.update(80, "Risk metrikleri hesaplanıyor...")

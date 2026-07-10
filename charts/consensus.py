@@ -13,6 +13,11 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.market_calendar import (
+    build_forecast_dates,
+    get_market_calendar_config,
+)
+
 
 MODEL_COLORS: Final[tuple[str, ...]] = (
     "#FF4B4B",
@@ -40,27 +45,6 @@ def _to_one_dimensional_array(
         )
 
     return array
-
-
-def _build_forecast_dates(
-    last_date: Any,
-    periods: int,
-    period_unit: str,
-) -> pd.DatetimeIndex:
-    """Tahmin eksenini işlem günü veya takvim günü olarak oluşturur."""
-    start_date = pd.Timestamp(last_date)
-
-    if str(period_unit).lower() == "işlem günü":
-        return pd.bdate_range(
-            start=start_date + pd.offsets.BDay(1),
-            periods=periods,
-        )
-
-    return pd.date_range(
-        start=start_date + pd.Timedelta(days=1),
-        periods=periods,
-        freq="D",
-    )
 
 
 def create_consensus_chart(
@@ -125,12 +109,15 @@ def create_consensus_chart(
             "İyimser senaryo baz senaryonun altında olamaz."
         )
 
-    forecast_dates = _build_forecast_dates(
+    calendar_config = get_market_calendar_config(
+        asset_type=forecast_data.get("varlik_turu"),
+        market_symbol=forecast_data.get("market_symbol"),
+    )
+    forecast_dates = build_forecast_dates(
         last_date=last_date,
         periods=expected_length,
-        period_unit=str(
-            forecast_data.get("vade_birimi", "işlem günü")
-        ),
+        asset_type=calendar_config.asset_type,
+        market_symbol=forecast_data.get("market_symbol"),
     )
 
     confidence_method = str(
@@ -289,13 +276,15 @@ def create_consensus_chart(
             "xanchor": "left",
             "x": 0,
         },
-        xaxis_title="Yaklaşık İşlem Tarihi",
+        xaxis_title=calendar_config.xaxis_title,
         yaxis_title="Senaryo Fiyatı",
         annotations=[
             {
                 "text": (
                     "Gölge alan kesin fiyat garantisi değildir. "
                     + confidence_method
+                    + " | Takvim: "
+                    + calendar_config.calendar_name
                 ),
                 "xref": "paper",
                 "yref": "paper",
