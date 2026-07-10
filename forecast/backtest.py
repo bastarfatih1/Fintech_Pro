@@ -167,6 +167,52 @@ def _calculate_stability_score(
     return float(np.clip(score, 0.0, 100.0))
 
 
+
+def _benchmark_metrics(
+    actual_values: np.ndarray,
+    reference_values: np.ndarray,
+) -> Tuple[float, float, float]:
+    """Son bilinen fiyatı tahmin kabul eden basit referans modeli ölçer."""
+    actual = np.asarray(actual_values, dtype=float).reshape(-1)
+    reference = np.asarray(reference_values, dtype=float).reshape(-1)
+
+    if len(actual) != len(reference) or len(actual) == 0:
+        raise ValueError("Referans model dizileri uyumlu değil.")
+
+    mae = float(mean_absolute_error(actual, reference))
+    rmse = float(np.sqrt(mean_squared_error(actual, reference)))
+    direction_accuracy = _direction_accuracy(
+        actual_values=actual,
+        predicted_values=reference,
+        reference_values=reference,
+    )
+    return mae, rmse, direction_accuracy
+
+
+def _attach_benchmark_columns(
+    row: Dict[str, object],
+    benchmark_rmse: float,
+) -> Dict[str, object]:
+    """Model satırına referans model karşılaştırmasını ekler."""
+    model_rmse = pd.to_numeric(row.get("RMSE"), errors="coerce")
+
+    if pd.isna(model_rmse) or benchmark_rmse <= 0:
+        improvement = np.nan
+        beats_benchmark = False
+    else:
+        improvement = (
+            (benchmark_rmse - float(model_rmse))
+            / benchmark_rmse
+            * 100.0
+        )
+        beats_benchmark = bool(float(model_rmse) < benchmark_rmse)
+
+    row["Referans RMSE"] = float(benchmark_rmse)
+    row["RMSE İyileşme %"] = improvement
+    row["Referansı Geçti"] = "Evet" if beats_benchmark else "Hayır"
+    return row
+
+
 def evaluate_regression_models(
     data: pd.DataFrame,
     features: List[str],
@@ -179,8 +225,8 @@ def evaluate_regression_models(
     """
     Regresyon modellerini genişleyen pencere walk-forward yöntemiyle test eder.
 
-    Her model için pencere bazlı metriklerin ortalaması, sapması ve
-    stabilite skoru hesaplanır.
+    Her model ayrıca son bilinen fiyatı kullanan Naive_Last_Price
+    referans modeliyle karşılaştırılır.
     """
     required_columns = set(features + [target_column, reference_column])
     missing_columns = required_columns.difference(data.columns)
@@ -206,6 +252,54 @@ def evaluate_regression_models(
     )
 
     rows = []
+    benchmark_fold_mae = []
+    benchmark_fold_rmse = []
+    benchmark_fold_direction = []
+    benchmark_observations = 0
+
+    for train_end, test_end in folds:
+        test_data = clean_data.iloc[train_end:test_end]
+        actual = test_data[target_column].to_numpy(dtype=float)
+        reference = test_data[reference_column].to_numpy(dtype=float)
+
+        mae, rmse, direction = _benchmark_metrics(
+            actual_values=actual,
+            reference_values=reference,
+        )
+        benchmark_fold_mae.append(mae)
+        benchmark_fold_rmse.append(rmse)
+        benchmark_fold_direction.append(direction)
+        benchmark_observations += len(actual)
+
+    benchmark_rmse_mean = float(np.mean(benchmark_fold_rmse))
+    benchmark_rmse_std = float(np.std(benchmark_fold_rmse, ddof=0))
+    benchmark_direction_mean = float(np.mean(benchmark_fold_direction))
+    benchmark_direction_std = float(np.std(benchmark_fold_direction, ddof=0))
+
+    rows.append(
+        {
+            "Model": "Naive_Last_Price",
+            "MAE": float(np.mean(benchmark_fold_mae)),
+            "RMSE": benchmark_rmse_mean,
+            "RMSE Sapması": benchmark_rmse_std,
+            "Yön Doğruluğu %": benchmark_direction_mean,
+            "Yön Sapması": benchmark_direction_std,
+            "Stabilite Skoru": _calculate_stability_score(
+                rmse_mean=benchmark_rmse_mean,
+                rmse_std=benchmark_rmse_std,
+                direction_mean=benchmark_direction_mean,
+                direction_std=benchmark_direction_std,
+            ),
+            "Test Penceresi": len(folds),
+            "Test Gözlemi": benchmark_observations,
+            "Durum": "Başarılı",
+            "Backtest Türü": "Walk-Forward Referans",
+            "Referans RMSE": benchmark_rmse_mean,
+            "RMSE İyileşme %": 0.0,
+            "Referansı Geçti": "Referans",
+            "Hata": "",
+        }
+    )
 
     for model_name, template_model in _build_models().items():
         fold_mae = []
@@ -287,6 +381,9 @@ def evaluate_regression_models(
                     "Test Gözlemi": total_observations,
                     "Durum": "Başarısız",
                     "Backtest Türü": "Walk-Forward Genişleyen Pencere",
+                    "Referans RMSE": benchmark_rmse_mean,
+                    "RMSE İyileşme %": np.nan,
+                    "Referansı Geçti": "Hayır",
                     "Hata": " | ".join(errors) or (
                         "En az iki başarılı test penceresi gerekir."
                     ),
@@ -300,38 +397,42 @@ def evaluate_regression_models(
         direction_mean = float(np.mean(fold_direction))
         direction_std = float(np.std(fold_direction, ddof=0))
 
+        row = {
+            "Model": model_name,
+            "MAE": mae_mean,
+            "RMSE": rmse_mean,
+            "RMSE Sapması": rmse_std,
+            "Yön Doğruluğu %": direction_mean,
+            "Yön Sapması": direction_std,
+            "Stabilite Skoru": _calculate_stability_score(
+                rmse_mean=rmse_mean,
+                rmse_std=rmse_std,
+                direction_mean=direction_mean,
+                direction_std=direction_std,
+            ),
+            "Test Penceresi": successful_folds,
+            "Test Gözlemi": total_observations,
+            "Durum": "Başarılı",
+            "Backtest Türü": "Walk-Forward Genişleyen Pencere",
+            "Hata": (
+                f"{len(errors)} pencere atlandı."
+                if errors
+                else ""
+            ),
+        }
         rows.append(
-            {
-                "Model": model_name,
-                "MAE": mae_mean,
-                "RMSE": rmse_mean,
-                "RMSE Sapması": rmse_std,
-                "Yön Doğruluğu %": direction_mean,
-                "Yön Sapması": direction_std,
-                "Stabilite Skoru": _calculate_stability_score(
-                    rmse_mean=rmse_mean,
-                    rmse_std=rmse_std,
-                    direction_mean=direction_mean,
-                    direction_std=direction_std,
-                ),
-                "Test Penceresi": successful_folds,
-                "Test Gözlemi": total_observations,
-                "Durum": "Başarılı",
-                "Backtest Türü": "Walk-Forward Genişleyen Pencere",
-                "Hata": (
-                    f"{len(errors)} pencere atlandı."
-                    if errors
-                    else ""
-                ),
-            }
+            _attach_benchmark_columns(
+                row=row,
+                benchmark_rmse=benchmark_rmse_mean,
+            )
         )
 
     result = pd.DataFrame(rows)
 
     if not result.empty:
         result = result.sort_values(
-            by=["Durum", "Stabilite Skoru", "RMSE"],
-            ascending=[True, False, True],
+            by=["Durum", "Referansı Geçti", "Stabilite Skoru", "RMSE"],
+            ascending=[True, False, False, True],
             na_position="last",
         ).reset_index(drop=True)
 
@@ -538,7 +639,25 @@ def evaluate_arima_and_monte_carlo(
 
     actual_array = np.asarray(actual_values, dtype=float)
     reference_array = np.asarray(reference_values, dtype=float)
-    rows = []
+    _, benchmark_rmse, _ = _benchmark_metrics(
+        actual_values=actual_array,
+        reference_values=reference_array,
+    )
+
+    rows = [
+        _attach_benchmark_columns(
+            row=_calculate_metric_row(
+                model_name="Naive_Last_Price",
+                actual_values=actual_array,
+                predicted_values=reference_array,
+                reference_values=reference_array,
+                backtest_type="Genişleyen Pencere Referans",
+            ),
+            benchmark_rmse=benchmark_rmse,
+        )
+    ]
+    rows[0]["Referansı Geçti"] = "Referans"
+    rows[0]["RMSE İyileşme %"] = 0.0
 
     for model_name, predictions, errors in (
         ("ARIMA", arima_predictions, arima_errors),
@@ -562,6 +681,11 @@ def evaluate_arima_and_monte_carlo(
                 backtest_type="Genişleyen Pencere",
             )
 
+            row = _attach_benchmark_columns(
+                row=row,
+                benchmark_rmse=benchmark_rmse,
+            )
+
             if errors:
                 row["Hata"] = (
                     f"{len(errors)} başlangıç noktası atlandı."
@@ -582,6 +706,9 @@ def evaluate_arima_and_monte_carlo(
                     "Test Gözlemi": int(valid_mask.sum()),
                     "Durum": "Başarısız",
                     "Backtest Türü": "Genişleyen Pencere",
+                    "Referans RMSE": benchmark_rmse,
+                    "RMSE İyileşme %": np.nan,
+                    "Referansı Geçti": "Hayır",
                     "Hata": str(exc),
                 }
             )
@@ -603,7 +730,7 @@ def calculate_dynamic_model_weights(
         - Yön doğruluğu düşükse model puanı azaltılır.
         - Pencereler arası performansı istikrarsız olan modelin puanı düşürülür.
         - Backtesti başarısız olan regresyon modeli ağırlık alamaz.
-        - Geçerli backtest sonucu olmayan aktif model ağırlık alamaz.
+        - Geçerli backtest sonucu olmayan veya referans modeli geçemeyen model ağırlık alamaz.
         - Son ağırlıkların toplamı 1.0 olur.
     """
     active_model_names = list(dict.fromkeys(str(name) for name in active_models))
@@ -686,6 +813,11 @@ def calculate_dynamic_model_weights(
     )
     successful = successful[successful["RMSE"] > 0]
 
+    if "Referansı Geçti" in successful.columns:
+        successful = successful[
+            successful["Referansı Geçti"].astype(str).str.lower() == "evet"
+        ]
+
     valid_rmse_values = successful["RMSE"].to_numpy(dtype=float)
     median_rmse = (
         float(np.median(valid_rmse_values))
@@ -746,18 +878,9 @@ def calculate_dynamic_model_weights(
     }
 
     if not positive_scores:
-        total_fallback = sum(fallback_scores.values())
-
-        if total_fallback <= 0:
-            equal_weight = 1.0 / len(active_model_names)
-            return {
-                model_name: equal_weight
-                for model_name in active_model_names
-            }
-
         return {
-            model_name: score / total_fallback
-            for model_name, score in fallback_scores.items()
+            model_name: 0.0
+            for model_name in active_model_names
         }
 
     total_score = sum(positive_scores.values())
@@ -768,4 +891,3 @@ def calculate_dynamic_model_weights(
         )
         for model_name in active_model_names
     }
-
