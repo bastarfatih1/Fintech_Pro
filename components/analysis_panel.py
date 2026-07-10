@@ -114,7 +114,6 @@ def render_analysis_panel(
     else:
         st.plotly_chart(
             price_figure,
-            use_container_width=True,
             config={
                 "scrollZoom": True,
                 "displaylogo": False,

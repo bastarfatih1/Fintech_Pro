@@ -198,7 +198,6 @@ def _render_backtest_results(
 
     st.dataframe(
         display_table[visible_columns],
-        width="stretch",
         hide_index=True,
     )
 
@@ -270,7 +269,6 @@ def render_consensus_panel(
     else:
         st.plotly_chart(
             consensus_figure,
-            width="stretch",
             config={
                 "scrollZoom": True,
                 "displaylogo": False,
