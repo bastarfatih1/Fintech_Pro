@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import requests
@@ -12,23 +15,85 @@ import yfinance as yf
 
 warnings.filterwarnings('ignore')
 
+FALLBACK_CURRENCY_RATES = {
+    "USD": 1.0,
+    "TRY": 34.20,
+    "EUR": 0.92,
+    "CNY": 7.25,
+    "RUB": 88.0,
+    "SAR": 3.75,
+    "KWD": 0.31,
+    "JPY": 155.0,
+}
+
+
+def _load_local_env() -> None:
+    """
+    Proje kökündeki .env dosyasını ek paket gerektirmeden yükler.
+
+    Mevcut sistem ortam değişkenleri korunur.
+    """
+    env_path = Path(__file__).resolve().parent / ".env"
+
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+
+        if key:
+            os.environ.setdefault(key, value)
+
+
+_load_local_env()
+
+
 def get_kurlar():
-    API_KEY = "de8106e54912c5541f0b97fa" 
-    url = f"https://v6.exchangerate-api.com/v6/{API_KEY}/latest/USD"
+    """
+    Güncel döviz kurlarını getirir.
+
+    API anahtarı EXCHANGE_RATE_API_KEY ortam değişkeninden okunur.
+    Anahtar yoksa veya istek başarısız olursa güvenli yedek değerler döner.
+    """
+    api_key = os.getenv("EXCHANGE_RATE_API_KEY", "").strip()
+
+    if not api_key:
+        return FALLBACK_CURRENCY_RATES.copy()
+
+    url = (
+        "https://v6.exchangerate-api.com/v6/"
+        f"{api_key}/latest/USD"
+    )
+
     try:
-        response = requests.get(url, timeout=3)
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
-        rates = response.json().get('conversion_rates', {})
+
+        payload = response.json()
+        rates = payload.get("conversion_rates", {})
+
+        if not rates:
+            return FALLBACK_CURRENCY_RATES.copy()
+
         return {
-            "USD": 1.0, "TRY": rates.get('TRY', 34.20), "EUR": rates.get('EUR', 0.92), 
-            "CNY": rates.get('CNY', 7.25), "RUB": rates.get('RUB', 88.0), 
-            "SAR": rates.get('SAR', 3.75), "KWD": rates.get('KWD', 0.31), "JPY": rates.get('JPY', 155.0)
+            "USD": 1.0,
+            "TRY": rates.get("TRY", FALLBACK_CURRENCY_RATES["TRY"]),
+            "EUR": rates.get("EUR", FALLBACK_CURRENCY_RATES["EUR"]),
+            "CNY": rates.get("CNY", FALLBACK_CURRENCY_RATES["CNY"]),
+            "RUB": rates.get("RUB", FALLBACK_CURRENCY_RATES["RUB"]),
+            "SAR": rates.get("SAR", FALLBACK_CURRENCY_RATES["SAR"]),
+            "KWD": rates.get("KWD", FALLBACK_CURRENCY_RATES["KWD"]),
+            "JPY": rates.get("JPY", FALLBACK_CURRENCY_RATES["JPY"]),
         }
-    except Exception:
-        return {
-            "USD": 1.0, "TRY": 34.20, "EUR": 0.92, "CNY": 7.25, 
-            "RUB": 88.0, "SAR": 3.75, "KWD": 0.31, "JPY": 155.0
-        }
+    except (requests.RequestException, ValueError, TypeError):
+        return FALLBACK_CURRENCY_RATES.copy()
 
 def volatile_path_generator(
     curr,
@@ -263,9 +328,9 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         "mc_lower": mc_lower * kur_val,
         "rotalar": {k: v * kur_val for k, v in rotalar.items()},
         "stats": {
-    **risk_stats,
-    "Beta": beta,
-},
+            **risk_stats,
+            "Beta": beta,
+        },
         "gelecek_df": pd.DataFrame(gelecek_tablo),
         "boga": float(np.max(konsensus_rota) * kur_val),
         "ayi": float(np.min(konsensus_rota) * kur_val),
