@@ -12,7 +12,11 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from statsmodels.tsa.arima.model import ARIMA
 from risk.metrics import calculate_risk_metrics
-from forecast.backtest import evaluate_regression_models
+from forecast.backtest import (
+    calculate_dynamic_model_weights,
+    evaluate_arima_and_monte_carlo,
+    evaluate_regression_models,
+)
 import yfinance as yf
 
 warnings.filterwarnings('ignore')
@@ -253,16 +257,46 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
             "Seçilen tahmin vadesi için yeterli eğitim verisi bulunamadı."
         )
 
+    backtest_frames = []
+    backtest_messages = []
+
     try:
-        backtest_df = evaluate_regression_models(
+        regression_backtest = evaluate_regression_models(
             data=train_df,
             features=features,
             target_column="Target",
             reference_column="Close",
         )
-        backtest_status = "tamamlandı"
+        backtest_frames.append(regression_backtest)
     except ValueError as exc:
-        logger.warning("Backtest çalıştırılamadı: %s", exc)
+        logger.warning("Regresyon backtesti çalıştırılamadı: %s", exc)
+        backtest_messages.append(f"Regresyon: {exc}")
+
+    try:
+        time_series_backtest = evaluate_arima_and_monte_carlo(
+            close_prices=df["Close"],
+            horizon=periyot_gun,
+        )
+        backtest_frames.append(time_series_backtest)
+    except ValueError as exc:
+        logger.warning(
+            "ARIMA/Monte Carlo backtesti çalıştırılamadı: %s",
+            exc,
+        )
+        backtest_messages.append(f"ARIMA/Monte Carlo: {exc}")
+
+    if backtest_frames:
+        backtest_df = pd.concat(
+            backtest_frames,
+            ignore_index=True,
+            sort=False,
+        )
+        backtest_status = (
+            "tamamlandı"
+            if not backtest_messages
+            else "kısmi: " + " | ".join(backtest_messages)
+        )
+    else:
         backtest_df = pd.DataFrame(
             columns=[
                 "Model",
@@ -271,10 +305,14 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
                 "Yön Doğruluğu %",
                 "Test Gözlemi",
                 "Durum",
+                "Backtest Türü",
                 "Hata",
             ]
         )
-        backtest_status = str(exc)
+        backtest_status = (
+            " | ".join(backtest_messages)
+            or "Backtest sonucu üretilemedi."
+        )
 
     def kaydet_basarili_model(model_adi, rota):
         """Başarılı model rotasını doğrular ve kaydeder."""
@@ -424,24 +462,39 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
             "Tahmin modellerinin hiçbiri geçerli sonuç üretemedi."
         )
 
-    agirliklar = {
-        "ARIMA": 0.20,
-        "Monte_Carlo": 0.25,
-        "Random_Forest": 0.20,
-        "XGBoost": 0.15,
-        "Linear_Regression": 0.10,
-        "SVR": 0.10,
-    }
+    model_agirliklari = calculate_dynamic_model_weights(
+        backtest_results=backtest_df,
+        active_models=rotalar.keys(),
+    )
 
     base_path = np.zeros(periyot_gun, dtype=float)
     toplam_w = 0.0
 
     for model_adi, model_rotasi in rotalar.items():
-        agirlik = agirliklar.get(model_adi, 0.10)
+        agirlik = float(model_agirliklari.get(model_adi, 0.0))
+
+        if agirlik <= 0:
+            continue
+
         base_path += model_rotasi * agirlik
         toplam_w += agirlik
 
+    if toplam_w <= 0:
+        raise RuntimeError(
+            "Geçerli konsensüs ağırlığı üretilemedi."
+        )
+
     konsensus_rota = base_path / toplam_w
+
+    if not backtest_df.empty and "Model" in backtest_df.columns:
+        backtest_df = backtest_df.copy()
+        backtest_df["Konsensüs Ağırlığı %"] = (
+            backtest_df["Model"]
+            .map(model_agirliklari)
+            .fillna(0.0)
+            .astype(float)
+            * 100.0
+        )
 
     if "Monte_Carlo" not in rotalar:
         mc_upper = konsensus_rota.copy()
@@ -480,6 +533,7 @@ def gelecek_senaryolari_hesapla(data, periyot_gun, ana_para, curr, kur_val=1.0):
         "mc_lower": mc_lower * kur_val,
         "rotalar": {k: v * kur_val for k, v in rotalar.items()},
         "model_durumlari": model_durumlari,
+        "model_agirliklari": model_agirliklari,
         "backtest_df": backtest_df,
         "backtest_status": backtest_status,
         "stats": {
