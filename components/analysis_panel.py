@@ -23,6 +23,94 @@ def _inject_premium_summary_style() -> None:
     st.markdown(
         """
         <style>
+
+        .fp-exec-pulse {
+            border: 1px solid rgba(56, 189, 248, 0.30);
+            border-radius: 24px;
+            padding: 20px 22px;
+            margin: 8px 0 18px 0;
+            background:
+                radial-gradient(circle at 12% 10%, rgba(56, 189, 248, 0.22), transparent 34%),
+                radial-gradient(circle at 86% 16%, rgba(134, 239, 172, 0.13), transparent 30%),
+                linear-gradient(135deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.94));
+            box-shadow: 0 22px 58px rgba(2, 6, 23, 0.34);
+        }
+        .fp-exec-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.75fr);
+            gap: 18px;
+            align-items: stretch;
+        }
+        .fp-exec-kicker {
+            color: #93c5fd;
+            font-size: 0.74rem;
+            letter-spacing: 0.17em;
+            text-transform: uppercase;
+            font-weight: 850;
+            margin-bottom: 8px;
+        }
+        .fp-exec-signal {
+            color: #f8fafc;
+            font-size: 1.72rem;
+            line-height: 1.12;
+            font-weight: 900;
+            letter-spacing: -0.03em;
+            margin-bottom: 9px;
+        }
+        .fp-exec-summary {
+            color: #cbd5e1;
+            line-height: 1.58;
+            font-size: 0.96rem;
+            max-width: 860px;
+        }
+        .fp-exec-stack {
+            border: 1px solid rgba(148, 163, 184, 0.20);
+            border-radius: 18px;
+            padding: 14px 15px;
+            background: rgba(15, 23, 42, 0.54);
+        }
+        .fp-exec-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+        }
+        .fp-exec-row:last-child {
+            border-bottom: 0;
+        }
+        .fp-exec-label {
+            color: #94a3b8;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .fp-exec-value {
+            color: #f8fafc;
+            font-size: 0.86rem;
+            font-weight: 850;
+            text-align: right;
+        }
+        .fp-exec-positive {
+            color: #86efac;
+        }
+        .fp-exec-negative {
+            color: #fca5a5;
+        }
+        .fp-exec-neutral {
+            color: #cbd5e1;
+        }
+        .fp-exec-note {
+            margin-top: 12px;
+            color: #94a3b8;
+            font-size: 0.76rem;
+            line-height: 1.45;
+        }
+        @media (max-width: 860px) {
+            .fp-exec-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .fp-hero {
             border: 1px solid rgba(148, 163, 184, 0.28);
             border-radius: 22px;
@@ -332,6 +420,91 @@ def _build_general_status(
     return f"{direction}; {uncertainty} ve {confidence_text}."
 
 
+def _classify_executive_signal(
+    risk_level: str,
+    confidence: float,
+    nominal_return: float,
+    band_width: float,
+) -> tuple[str, str]:
+    """Al/sat dili kullanmadan üst seviye model sentezi üretir."""
+    if confidence < 40:
+        return "Düşük Güven Modu", "fp-exec-neutral"
+
+    if band_width > 35 and risk_level == "Yüksek":
+        return "Yüksek Belirsizlik", "fp-exec-negative"
+
+    if nominal_return > 5 and risk_level != "Yüksek":
+        return "Pozitif Senaryo", "fp-exec-positive"
+
+    if nominal_return < -5:
+        return "Negatif Baskı", "fp-exec-negative"
+
+    if confidence >= 70:
+        return "Model Uyumu Güçlü", "fp-exec-positive"
+
+    return "Nötr Görünüm", "fp-exec-neutral"
+
+
+def _render_executive_market_pulse(
+    signal_label: str,
+    signal_class: str,
+    horizon: str,
+    risk_level: str,
+    confidence: float,
+    nominal_return: float,
+    band_width: float,
+    general_status: str,
+) -> None:
+    """Grafikten önce görünen üst düzey sentez kartını gösterir."""
+    st.markdown(
+        f"""
+        <div class="fp-exec-pulse">
+            <div class="fp-exec-grid">
+                <div>
+                    <div class="fp-exec-kicker">Executive Market Pulse</div>
+                    <div class="fp-exec-signal {signal_class}">
+                        {signal_label}
+                    </div>
+                    <div class="fp-exec-summary">
+                        {general_status}
+                        Seçili vade için model çıktısı; risk, güven ve senaryo
+                        genişliği birlikte değerlendirilerek özetlenmiştir.
+                    </div>
+                    <div class="fp-exec-note">
+                        Bu sentez al/sat yönlendirmesi değildir. Modelin mevcut
+                        veri setindeki senaryo görünümünü sadeleştirir.
+                    </div>
+                </div>
+                <div class="fp-exec-stack">
+                    <div class="fp-exec-row">
+                        <div class="fp-exec-label">Vade</div>
+                        <div class="fp-exec-value">{horizon}</div>
+                    </div>
+                    <div class="fp-exec-row">
+                        <div class="fp-exec-label">Model Güveni</div>
+                        <div class="fp-exec-value">%{confidence:.1f}</div>
+                    </div>
+                    <div class="fp-exec-row">
+                        <div class="fp-exec-label">Risk Seviyesi</div>
+                        <div class="fp-exec-value">{risk_level}</div>
+                    </div>
+                    <div class="fp-exec-row">
+                        <div class="fp-exec-label">Senaryo Farkı</div>
+                        <div class="fp-exec-value {signal_class}">{nominal_return:+.2f}%</div>
+                    </div>
+                    <div class="fp-exec-row">
+                        <div class="fp-exec-label">Bant Genişliği</div>
+                        <div class="fp-exec-value">%{band_width:.1f}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
 def _render_professional_summary(
     current_price: float,
     currency_rate: float,
@@ -379,6 +552,24 @@ def _render_professional_summary(
         band_width = ((upper_target - lower_target) / current_display) * 100.0
 
     _inject_premium_summary_style()
+
+    signal_label, signal_class = _classify_executive_signal(
+        risk_level=risk_level,
+        confidence=confidence,
+        nominal_return=nominal_return,
+        band_width=band_width,
+    )
+
+    _render_executive_market_pulse(
+        signal_label=signal_label,
+        signal_class=signal_class,
+        horizon=horizon,
+        risk_level=risk_level,
+        confidence=confidence,
+        nominal_return=nominal_return,
+        band_width=band_width,
+        general_status=general_status,
+    )
 
     st.markdown(
         f"""
