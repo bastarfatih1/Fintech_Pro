@@ -12,8 +12,8 @@ Bu belge teknik envanterdir. Ticari yayın için hukuki/lisans incelemesinin yer
 
 | Veri alanı | Mevcut kaynak | Dosya / Fonksiyon | Cache | Üretim durumu |
 |---|---|---|---:|---|
-| Piyasa fiyat geçmişi | yfinance / Yahoo Finance | `services/cache_service.py` / `get_cached_asset_history()` | 1 saat | Prototip |
-| S&P 500 beta verisi | yfinance | `finans_motoru.py` / `get_sp500_data()` | Yok | Prototip |
+| Piyasa fiyat geçmişi | yfinance / Yahoo Finance | `services/cache_service.py` -> `services/data_provider.py` / `get_cached_asset_history()` | 1 saat | Prototip |
+| S&P 500 beta verisi | yfinance / Yahoo Finance | `finans_motoru.py` -> `services/data_provider.py` / `get_sp500_data()` | Yok | Prototip |
 | Döviz kurları | ExchangeRate-API | `finans_motoru.py` / `get_kurlar()` | 15 dk | API key ile |
 | Haberler | Google News RSS | `haber_motoru.py` / `canli_rss_haber_cek()` | 10 dk + fonksiyon içi 1 saat | Prototip |
 | AI teknik yorum | Local Ollama | `haber_motoru.py` / `ollama_ai_cagir()` | 1 saat | Yerel servis |
@@ -24,7 +24,12 @@ Bu belge teknik envanterdir. Ticari yayın için hukuki/lisans incelemesinin yer
 ```text
 app.py
   ├─ get_cached_asset_history()
-  │    └─ yfinance / Yahoo Finance geçmiş OHLCV verisi
+  │    └─ services.data_provider.get_market_history()
+  │         └─ YahooFinancePrototypeProvider
+  │              └─ yfinance / Yahoo Finance geçmiş OHLCV verisi
+  │
+  ├─ get_cached_asset_history_with_metadata()
+  │    └─ veri + kaynak/lisans metadata bilgisi
   │
   ├─ get_cached_currencies()
   │    └─ finans_motoru.get_kurlar()
@@ -40,7 +45,9 @@ Beta hesabı için ayrıca:
 ```text
 finans_motoru.py
   └─ get_sp500_data()
-       └─ yfinance ^GSPC kapanış verisi
+       └─ services.data_provider.get_market_history()
+            └─ YahooFinancePrototypeProvider
+                 └─ yfinance ^GSPC kapanış verisi
 ```
 
 AI yorumları için ayrıca:
@@ -66,6 +73,10 @@ Kullanıldığı yer:
 ```text
 services/cache_service.py
 get_cached_asset_history(symbol, period="10y")
+
+services/data_provider.py
+get_market_history(symbol, period, asset_type)
+YahooFinancePrototypeProvider
 ```
 
 Mevcut görev:
@@ -73,6 +84,7 @@ Mevcut görev:
 - Seçilen varlığın geçmiş OHLCV verisini indirir.
 - Streamlit cache ile 1 saat saklanır.
 - Model eğitimleri, grafikler, performans ve risk metrikleri bu veriye dayanır.
+- Veri kaynağı metadata bilgisi artık provider katmanında üretilir.
 
 Risk:
 
@@ -85,6 +97,7 @@ Karar:
 ```text
 Üretim için NO-GO.
 Demo / geliştirme için kontrollü kullanılabilir.
+Provider katmanına bağlandı.
 ```
 
 ### 2. S&P 500 beta verisi
@@ -100,22 +113,31 @@ Kullanıldığı yer:
 ```text
 finans_motoru.py
 get_sp500_data(start_date, end_date)
+
+services/data_provider.py
+get_market_history(symbol="^GSPC", asset_type="index", start_date, end_date)
+YahooFinancePrototypeProvider
 ```
 
 Mevcut görev:
 
 - Beta hesabı için S&P 500 kapanış verisi getirir.
-- Ana piyasa geçmişinden ayrı çağrı yapar.
+- Veri çağrısı artık doğrudan `finans_motoru.py` içinden yapılmaz.
+- S&P 500 verisi provider katmanı üzerinden alınır.
+- İleride lisanslı endeks sağlayıcısına geçiş tek provider katmanından yapılabilir.
 
 Risk:
 
 - Ana fiyat verisiyle aynı lisans ve süreklilik risklerini taşır.
-- Cache katmanı dışında çalıştığı için veri çağrısı merkezi değildir.
+- Provider katmanına taşındı ancak kullanılan kaynak hâlâ prototip yfinance kaynağıdır.
+- Ticari yayın için lisans kontrolü hâlâ gereklidir.
 
 Karar:
 
 ```text
-Sprint 3.13 içinde provider katmanına taşınmalı.
+Provider katmanına taşındı.
+Üretim için NO-GO.
+Demo / geliştirme için kontrollü kullanılabilir.
 ```
 
 ### 3. Döviz kurları
@@ -231,7 +253,7 @@ app.py
   ↓
 services/cache_service.py
   ↓
-services/market_data_provider.py
+services/data_provider.py
   ↓
 providers/
   ├─ yahoo_provider.py
@@ -267,29 +289,44 @@ Ticari yayın öncesi şu kapılar kapanmadan üretime çıkılmamalıdır:
 6. Veri hatalarında kullanıcı dostu hata mesajları
 7. Demo/prototip modu ile üretim modu ayrımı
 
-## Sprint 3.13 sonraki adımlar
+## Sprint 3.13 tamamlanan alt adımlar
 
 ### Sprint 3.13B
 
-Veri sağlayıcı arayüzü taslağı:
+Veri sağlayıcı arayüzü taslağı eklendi:
 
 ```text
 MarketDataResult
 MarketDataProvider
 DataSourceMetadata
+YahooFinancePrototypeProvider
 ```
 
 ### Sprint 3.13C
 
-`get_cached_asset_history()` fonksiyonunu provider katmanına bağlama.
+`get_cached_asset_history()` fonksiyonu provider katmanına bağlandı.
 
 ### Sprint 3.13D
 
-S&P 500 beta verisini provider katmanına taşıma.
+Arayüzde veri kaynağı, lisans durumu, prototip etiketi ve üretime uygunluk bilgisi gösterildi.
 
 ### Sprint 3.13E
 
-Arayüzde veri kaynağı ve gecikme etiketi gösterme.
+S&P 500 beta verisi provider katmanına taşındı.
+
+## Sprint 3.13 sonraki adımlar
+
+### Sprint 3.13G
+
+Döviz kuru sonucuna metadata ekleme.
+
+### Sprint 3.13H
+
+Haber verisi sonucuna kaynak ve lisans etiketi ekleme.
+
+### Sprint 3.13I
+
+Demo modu / üretim modu ayrımını konfigürasyona bağlama.
 
 ## Genel karar
 

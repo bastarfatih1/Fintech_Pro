@@ -40,6 +40,23 @@ Uygulamada:
 - Piyasa saatleri henüz yok.
 - Lisanslı veri sağlayıcı entegrasyonu henüz yok.
 
+### Sprint 3.13 ilerleme
+
+- Veri kaynağı envanteri belgesi oluşturuldu.
+- `services/data_provider.py` ile piyasa veri sağlayıcı arayüzü eklendi.
+- `DataSourceMetadata`, `MarketDataResult` ve `MarketDataProvider` yapıları eklendi.
+- `YahooFinancePrototypeProvider` eklendi.
+- Piyasa fiyat geçmişi provider katmanı üzerinden alınır hâle getirildi.
+- Arayüzde veri kaynağı, lisans durumu, prototip bilgisi ve üretime uygunluk etiketi gösterildi.
+- S&P 500 beta verisi doğrudan `finans_motoru.py` içindeki yfinance çağrısından çıkarıldı.
+- S&P 500 beta verisi `services/data_provider.py` provider katmanı üzerinden alınır hâle getirildi.
+
+### Son durum
+
+Sprint 3.13 devam ediyor.
+
+Piyasa fiyat geçmişi ve S&P 500 beta verisi artık ortak provider mimarisinden geçiyor.
+
 ### Sıradaki iş
 
-Sprint 3.13 - Veri Kaynağı Katmanı ve Üretim Hazırlığı
+Sprint 3.13G - Döviz kuru metadata ve kaynak etiketi
