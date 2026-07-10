@@ -213,6 +213,114 @@ def _attach_benchmark_columns(
     return row
 
 
+
+def _absolute_log_errors(
+    actual_values: np.ndarray,
+    predicted_values: np.ndarray,
+) -> np.ndarray:
+    """
+    Fiyat tahminlerinin mutlak log hata dağılımını hesaplar.
+
+    Log hata, pozitif fiyatlarda aşağı ve yukarı yönlü sapmaları
+    simetrik ve çarpımsal biçimde ifade eder.
+    """
+    actual = np.asarray(actual_values, dtype=float).reshape(-1)
+    predicted = np.asarray(predicted_values, dtype=float).reshape(-1)
+
+    if len(actual) != len(predicted) or len(actual) == 0:
+        raise ValueError("Hata kalibrasyon dizileri uyumlu değil.")
+
+    valid_mask = (
+        np.isfinite(actual)
+        & np.isfinite(predicted)
+        & (actual > 0)
+        & (predicted > 0)
+    )
+
+    if not valid_mask.any():
+        raise ValueError("Hata kalibrasyonu için geçerli fiyat yok.")
+
+    return np.abs(
+        np.log(actual[valid_mask] / predicted[valid_mask])
+    )
+
+
+def _error_distribution_columns(
+    absolute_log_errors: Iterable[float],
+) -> Dict[str, object]:
+    """Backtest hata dağılımını güven aralığı kalibrasyonu için özetler."""
+    errors = np.asarray(
+        list(absolute_log_errors),
+        dtype=float,
+    ).reshape(-1)
+    errors = errors[np.isfinite(errors) & (errors >= 0)]
+
+    if errors.size == 0:
+        return {
+            "Kalibrasyon Medyan Log Hata": np.nan,
+            "Kalibrasyon %90 Log Hata": np.nan,
+            "Kalibrasyon Gözlemi": 0,
+        }
+
+    return {
+        "Kalibrasyon Medyan Log Hata": float(
+            np.quantile(errors, 0.50)
+        ),
+        "Kalibrasyon %90 Log Hata": float(
+            np.quantile(errors, 0.90)
+        ),
+        "Kalibrasyon Gözlemi": int(errors.size),
+    }
+
+
+def calculate_weighted_calibration_error(
+    backtest_results: pd.DataFrame,
+    model_weights: Mapping[str, float],
+    column: str = "Kalibrasyon %90 Log Hata",
+) -> Optional[float]:
+    """
+    Aktif modellerin backtest hata yüzdeliklerini ağırlıklı olarak birleştirir.
+
+    Sonuç log-fiyat ölçeğindedir ve çarpımsal güven aralığı üretmek için
+    kullanılabilir.
+    """
+    if (
+        not isinstance(backtest_results, pd.DataFrame)
+        or backtest_results.empty
+        or "Model" not in backtest_results.columns
+        or column not in backtest_results.columns
+    ):
+        return None
+
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for _, row in backtest_results.iterrows():
+        model_name = str(row.get("Model", ""))
+        weight = float(model_weights.get(model_name, 0.0))
+
+        if not np.isfinite(weight) or weight <= 0:
+            continue
+
+        value = pd.to_numeric(row.get(column), errors="coerce")
+
+        if pd.isna(value) or not np.isfinite(float(value)):
+            continue
+
+        value = float(value)
+
+        if value < 0:
+            continue
+
+        weighted_sum += value * weight
+        total_weight += weight
+
+    if total_weight <= 0:
+        return None
+
+    return float(weighted_sum / total_weight)
+
+
 def evaluate_regression_models(
     data: pd.DataFrame,
     features: List[str],
@@ -255,6 +363,7 @@ def evaluate_regression_models(
     benchmark_fold_mae = []
     benchmark_fold_rmse = []
     benchmark_fold_direction = []
+    benchmark_log_errors = []
     benchmark_observations = 0
 
     for train_end, test_end in folds:
@@ -269,6 +378,12 @@ def evaluate_regression_models(
         benchmark_fold_mae.append(mae)
         benchmark_fold_rmse.append(rmse)
         benchmark_fold_direction.append(direction)
+        benchmark_log_errors.extend(
+            _absolute_log_errors(
+                actual_values=actual,
+                predicted_values=reference,
+            ).tolist()
+        )
         benchmark_observations += len(actual)
 
     benchmark_rmse_mean = float(np.mean(benchmark_fold_rmse))
@@ -276,35 +391,38 @@ def evaluate_regression_models(
     benchmark_direction_mean = float(np.mean(benchmark_fold_direction))
     benchmark_direction_std = float(np.std(benchmark_fold_direction, ddof=0))
 
-    rows.append(
-        {
-            "Model": "Naive_Last_Price",
-            "MAE": float(np.mean(benchmark_fold_mae)),
-            "RMSE": benchmark_rmse_mean,
-            "RMSE Sapması": benchmark_rmse_std,
-            "Yön Doğruluğu %": benchmark_direction_mean,
-            "Yön Sapması": benchmark_direction_std,
-            "Stabilite Skoru": _calculate_stability_score(
-                rmse_mean=benchmark_rmse_mean,
-                rmse_std=benchmark_rmse_std,
-                direction_mean=benchmark_direction_mean,
-                direction_std=benchmark_direction_std,
-            ),
-            "Test Penceresi": len(folds),
-            "Test Gözlemi": benchmark_observations,
-            "Durum": "Başarılı",
-            "Backtest Türü": "Walk-Forward Referans",
-            "Referans RMSE": benchmark_rmse_mean,
-            "RMSE İyileşme %": 0.0,
-            "Referansı Geçti": "Referans",
-            "Hata": "",
-        }
+    benchmark_row = {
+        "Model": "Naive_Last_Price",
+        "MAE": float(np.mean(benchmark_fold_mae)),
+        "RMSE": benchmark_rmse_mean,
+        "RMSE Sapması": benchmark_rmse_std,
+        "Yön Doğruluğu %": benchmark_direction_mean,
+        "Yön Sapması": benchmark_direction_std,
+        "Stabilite Skoru": _calculate_stability_score(
+            rmse_mean=benchmark_rmse_mean,
+            rmse_std=benchmark_rmse_std,
+            direction_mean=benchmark_direction_mean,
+            direction_std=benchmark_direction_std,
+        ),
+        "Test Penceresi": len(folds),
+        "Test Gözlemi": benchmark_observations,
+        "Durum": "Başarılı",
+        "Backtest Türü": "Walk-Forward Referans",
+        "Referans RMSE": benchmark_rmse_mean,
+        "RMSE İyileşme %": 0.0,
+        "Referansı Geçti": "Referans",
+        "Hata": "",
+    }
+    benchmark_row.update(
+        _error_distribution_columns(benchmark_log_errors)
     )
+    rows.append(benchmark_row)
 
     for model_name, template_model in _build_models().items():
         fold_mae = []
         fold_rmse = []
         fold_direction = []
+        fold_log_errors = []
         total_observations = 0
         errors = []
 
@@ -354,6 +472,12 @@ def evaluate_regression_models(
                         reference_values=reference,
                     )
                 )
+                fold_log_errors.extend(
+                    _absolute_log_errors(
+                        actual_values=actual,
+                        predicted_values=predicted,
+                    ).tolist()
+                )
                 total_observations += len(actual)
             except (
                 ValueError,
@@ -384,6 +508,9 @@ def evaluate_regression_models(
                     "Referans RMSE": benchmark_rmse_mean,
                     "RMSE İyileşme %": np.nan,
                     "Referansı Geçti": "Hayır",
+                    "Kalibrasyon Medyan Log Hata": np.nan,
+                    "Kalibrasyon %90 Log Hata": np.nan,
+                    "Kalibrasyon Gözlemi": 0,
                     "Hata": " | ".join(errors) or (
                         "En az iki başarılı test penceresi gerekir."
                     ),
@@ -420,6 +547,9 @@ def evaluate_regression_models(
                 else ""
             ),
         }
+        row.update(
+            _error_distribution_columns(fold_log_errors)
+        )
         rows.append(
             _attach_benchmark_columns(
                 row=row,
@@ -644,20 +774,27 @@ def evaluate_arima_and_monte_carlo(
         reference_values=reference_array,
     )
 
-    rows = [
-        _attach_benchmark_columns(
-            row=_calculate_metric_row(
-                model_name="Naive_Last_Price",
+    benchmark_row = _attach_benchmark_columns(
+        row=_calculate_metric_row(
+            model_name="Naive_Last_Price",
+            actual_values=actual_array,
+            predicted_values=reference_array,
+            reference_values=reference_array,
+            backtest_type="Genişleyen Pencere Referans",
+        ),
+        benchmark_rmse=benchmark_rmse,
+    )
+    benchmark_row.update(
+        _error_distribution_columns(
+            _absolute_log_errors(
                 actual_values=actual_array,
                 predicted_values=reference_array,
-                reference_values=reference_array,
-                backtest_type="Genişleyen Pencere Referans",
-            ),
-            benchmark_rmse=benchmark_rmse,
+            )
         )
-    ]
-    rows[0]["Referansı Geçti"] = "Referans"
-    rows[0]["RMSE İyileşme %"] = 0.0
+    )
+    benchmark_row["Referansı Geçti"] = "Referans"
+    benchmark_row["RMSE İyileşme %"] = 0.0
+    rows = [benchmark_row]
 
     for model_name, predictions, errors in (
         ("ARIMA", arima_predictions, arima_errors),
@@ -681,9 +818,21 @@ def evaluate_arima_and_monte_carlo(
                 backtest_type="Genişleyen Pencere",
             )
 
+            _, comparable_benchmark_rmse, _ = _benchmark_metrics(
+                actual_values=actual_array[valid_mask],
+                reference_values=reference_array[valid_mask],
+            )
             row = _attach_benchmark_columns(
                 row=row,
-                benchmark_rmse=benchmark_rmse,
+                benchmark_rmse=comparable_benchmark_rmse,
+            )
+            row.update(
+                _error_distribution_columns(
+                    _absolute_log_errors(
+                        actual_values=actual_array[valid_mask],
+                        predicted_values=prediction_array[valid_mask],
+                    )
+                )
             )
 
             if errors:
@@ -709,6 +858,9 @@ def evaluate_arima_and_monte_carlo(
                     "Referans RMSE": benchmark_rmse,
                     "RMSE İyileşme %": np.nan,
                     "Referansı Geçti": "Hayır",
+                    "Kalibrasyon Medyan Log Hata": np.nan,
+                    "Kalibrasyon %90 Log Hata": np.nan,
+                    "Kalibrasyon Gözlemi": 0,
                     "Hata": str(exc),
                 }
             )
