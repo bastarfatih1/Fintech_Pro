@@ -10,10 +10,10 @@ import streamlit as st
 
 
 TAB_LABELS: Sequence[str] = (
-    "📊 Dashboard (Grafik & Risk)",
-    "🔮 AI Forecast & Modeller",
-    "📰 Haber Analizi",
-    "📈 Performans",
+    "Dashboard · Grafik & Risk",
+    "Forecast · Model Lab",
+    "News Radar",
+    "Performance Lens",
 )
 
 

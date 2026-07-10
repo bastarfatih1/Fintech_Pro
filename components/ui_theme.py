@@ -70,7 +70,7 @@ def inject_global_premium_theme() -> None:
 
         .block-container {
             padding-top: 1.6rem;
-            padding-bottom: 6.5rem;
+            padding-bottom: 8.5rem;
             max-width: 1420px;
         }
 
@@ -147,6 +147,25 @@ def inject_global_premium_theme() -> None:
             transform: translateY(0px) scale(0.995);
         }
 
+        /* Primary button custom signal mark */
+        div.stButton > button::before {
+            content: "";
+            width: 18px;
+            height: 18px;
+            display: inline-block;
+            margin-right: 8px;
+            border: 1.7px solid rgba(255, 255, 255, 0.82);
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at 50% 50%, rgba(134, 239, 172, 0.95) 0 18%, transparent 20%),
+                radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.34) 0 52%, transparent 54%);
+            box-shadow:
+                0 0 0 3px rgba(56, 189, 248, 0.11),
+                0 0 18px rgba(56, 189, 248, 0.30);
+            vertical-align: -3px;
+        }
+
+
         /* Input / select alanları */
         div[data-baseweb="select"] > div,
         div[data-baseweb="input"] > div,
@@ -203,19 +222,78 @@ def inject_global_premium_theme() -> None:
         }
 
         /* Tabs */
+        div[data-baseweb="tab-list"] {
+            gap: 8px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+            padding-bottom: 6px;
+        }
+
         button[data-baseweb="tab"] {
+            display: inline-flex !important;
+            align-items: center !important;
             border-radius: 999px !important;
-            margin-right: 6px !important;
+            margin-right: 0 !important;
+            padding: 8px 12px !important;
             color: var(--fp-soft) !important;
-            background: rgba(15, 23, 42, 0.45) !important;
-            border: 1px solid rgba(148, 163, 184, 0.15) !important;
+            background: rgba(15, 23, 42, 0.48) !important;
+            border: 1px solid rgba(148, 163, 184, 0.16) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+            transition: all 160ms ease;
+        }
+
+        button[data-baseweb="tab"]::before {
+            content: "";
+            width: 15px;
+            height: 15px;
+            display: inline-block;
+            margin-right: 7px;
+            border-radius: 6px;
+            border: 1px solid rgba(226, 232, 240, 0.28);
+            background:
+                linear-gradient(135deg, rgba(56, 189, 248, 0.72), rgba(99, 102, 241, 0.30));
+            box-shadow: 0 0 14px rgba(56, 189, 248, 0.18);
+        }
+
+        div[data-baseweb="tab-list"] button:nth-child(1)::before {
+            border-radius: 4px;
+            background:
+                linear-gradient(180deg, rgba(134, 239, 172, 0.90), rgba(14, 165, 233, 0.28));
+        }
+
+        div[data-baseweb="tab-list"] button:nth-child(2)::before {
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at 50% 50%, rgba(134, 239, 172, 0.95) 0 20%, transparent 22%),
+                radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.50) 0 56%, transparent 58%);
+        }
+
+        div[data-baseweb="tab-list"] button:nth-child(3)::before {
+            border-radius: 5px;
+            background:
+                linear-gradient(135deg, rgba(56, 189, 248, 0.88), rgba(14, 165, 233, 0.18)),
+                linear-gradient(90deg, transparent 0 38%, rgba(255,255,255,0.55) 39% 43%, transparent 44%);
+        }
+
+        div[data-baseweb="tab-list"] button:nth-child(4)::before {
+            border-radius: 5px;
+            background:
+                linear-gradient(135deg, rgba(253, 230, 138, 0.92), rgba(56, 189, 248, 0.22));
+        }
+
+        button[data-baseweb="tab"]:hover {
+            color: white !important;
+            border-color: rgba(56, 189, 248, 0.34) !important;
+            transform: translateY(-1px);
         }
 
         button[data-baseweb="tab"][aria-selected="true"] {
             color: white !important;
-            border-color: rgba(56, 189, 248, 0.40) !important;
+            border-color: rgba(56, 189, 248, 0.44) !important;
             background:
-                linear-gradient(135deg, rgba(14, 165, 233, 0.28), rgba(99, 102, 241, 0.22)) !important;
+                linear-gradient(135deg, rgba(14, 165, 233, 0.30), rgba(99, 102, 241, 0.23)) !important;
+            box-shadow:
+                0 10px 30px rgba(14, 165, 233, 0.12),
+                inset 0 1px 0 rgba(255,255,255,0.08);
         }
 
         /* Expander / alerts / captions */
@@ -247,28 +325,28 @@ def inject_global_premium_theme() -> None:
         .floating-action-bar {
             position: fixed;
             left: 50%;
-            bottom: 18px;
+            bottom: 10px;
             transform: translateX(-50%);
             z-index: 999;
             display: flex;
-            gap: 10px;
+            gap: 8px;
             align-items: center;
             justify-content: center;
-            padding: 10px 12px;
+            padding: 8px 10px;
             border: 1px solid rgba(56, 189, 248, 0.28);
             border-radius: 999px;
             background:
                 linear-gradient(135deg, rgba(2, 6, 23, 0.88), rgba(15, 23, 42, 0.82));
             backdrop-filter: blur(16px);
-            box-shadow: 0 18px 48px rgba(2, 6, 23, 0.36);
+            box-shadow: 0 14px 38px rgba(2, 6, 23, 0.34);
         }
 
         .fp-action-btn {
             border: 1px solid rgba(226, 232, 240, 0.12);
             border-radius: 999px;
-            padding: 9px 13px;
+            padding: 7px 11px;
             color: var(--fp-soft);
-            font-size: 0.88rem;
+            font-size: 0.82rem;
             font-weight: 750;
             background: rgba(15, 23, 42, 0.55);
             transition: all 150ms ease;
@@ -361,6 +439,19 @@ def inject_global_premium_theme() -> None:
         .fp-action-content .fp-icon-small {
             color: currentColor;
         }
+
+        /* Footer compact icon sizing */
+        .floating-action-bar .fp-icon-small {
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+        }
+
+        .floating-action-bar .fp-icon-small svg {
+            width: 15px;
+            height: 15px;
+        }
+
 
 
         /* Küçük ekranlar */
