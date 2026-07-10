@@ -30,42 +30,7 @@ from finans_motoru import (
 
 
 def render_data_source_notice(metadata) -> None:
-    """Piyasa verisinin kaynak ve lisans durumunu kullanıcıya gösterir."""
-    if metadata is None:
-        return
-
-    source_name = getattr(metadata, "source_name", "Bilinmiyor")
-    provider_type = getattr(metadata, "provider_type", "Bilinmiyor")
-    license_status = getattr(metadata, "license_status", "Bilinmiyor")
-    is_production_allowed = bool(
-        getattr(metadata, "is_production_allowed", False)
-    )
-    data_delay = getattr(metadata, "data_delay", "Bilinmiyor")
-    note = getattr(metadata, "note", "")
-
-    production_label = "Evet" if is_production_allowed else "Hayır"
-    provider_label = str(provider_type).title()
-
-    message = (
-        f"📡 Veri kaynağı: {source_name} | "
-        f"Durum: {provider_label} | "
-        f"Üretime uygun: {production_label} | "
-        f"Lisans: {license_status} | "
-        f"Gecikme: {data_delay}"
-    )
-
-    if is_production_allowed:
-        st.success(message)
-    else:
-        st.warning(message)
-
-    if note:
-        st.caption(note)
-
-
-
-def render_currency_source_notice(metadata) -> None:
-    """Döviz kuru kaynağını ve fallback durumunu kullanıcıya gösterir."""
+    """Piyasa verisinin kaynak bilgisini sade bir şekilde gösterir."""
     if metadata is None:
         return
 
@@ -79,26 +44,69 @@ def render_currency_source_notice(metadata) -> None:
     data_delay = getattr(metadata, "data_delay", "Bilinmiyor")
     note = getattr(metadata, "note", "")
 
-    production_label = "Evet" if is_production_allowed else "Hayır"
-    fallback_label = "Evet" if fallback_used else "Hayır"
     provider_label = str(provider_type).title()
 
-    message = (
-        f"💱 Kur kaynağı: {source_name} | "
-        f"Durum: {provider_label} | "
-        f"Fallback: {fallback_label} | "
-        f"Üretime uygun: {production_label} | "
-        f"Lisans: {license_status} | "
-        f"Güncellik: {data_delay}"
-    )
-
-    if fallback_used or not is_production_allowed:
-        st.warning(message)
+    if fallback_used:
+        st.warning(
+            f"📡 Veri kaynağı: {source_name} | Fallback kullanıldı."
+        )
     else:
-        st.success(message)
+        st.caption(
+            f"📡 Veri: {source_name} · {provider_label}"
+        )
 
-    if note:
-        st.caption(note)
+    with st.expander("Veri kaynağı detayı", expanded=False):
+        st.write(f"**Kaynak:** {source_name}")
+        st.write(f"**Durum:** {provider_label}")
+        st.write(
+            "**Üretime uygun:** "
+            f"{'Evet' if is_production_allowed else 'Hayır'}"
+        )
+        st.write(f"**Lisans:** {license_status}")
+        st.write(f"**Gecikme:** {data_delay}")
+        if note:
+            st.caption(note)
+
+
+
+def render_currency_source_notice(metadata) -> None:
+    """Döviz kuru kaynağını sade bir şekilde gösterir."""
+    if metadata is None:
+        return
+
+    source_name = getattr(metadata, "source_name", "Bilinmiyor")
+    provider_type = getattr(metadata, "provider_type", "Bilinmiyor")
+    license_status = getattr(metadata, "license_status", "Bilinmiyor")
+    is_production_allowed = bool(
+        getattr(metadata, "is_production_allowed", False)
+    )
+    fallback_used = bool(getattr(metadata, "fallback_used", False))
+    data_delay = getattr(metadata, "data_delay", "Bilinmiyor")
+    note = getattr(metadata, "note", "")
+
+    provider_label = str(provider_type).title()
+
+    if fallback_used:
+        st.warning(
+            f"💱 Kur kaynağı: {source_name} | Fallback kur tablosu kullanıldı."
+        )
+    else:
+        st.caption(
+            f"💱 Kur: {source_name} · {provider_label}"
+        )
+
+    with st.expander("Kur kaynağı detayı", expanded=False):
+        st.write(f"**Kaynak:** {source_name}")
+        st.write(f"**Durum:** {provider_label}")
+        st.write(f"**Fallback:** {'Evet' if fallback_used else 'Hayır'}")
+        st.write(
+            "**Üretime uygun:** "
+            f"{'Evet' if is_production_allowed else 'Hayır'}"
+        )
+        st.write(f"**Lisans:** {license_status}")
+        st.write(f"**Güncellik:** {data_delay}")
+        if note:
+            st.caption(note)
 
 
 def render_analysis_tabs(
