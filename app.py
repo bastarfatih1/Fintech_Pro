@@ -20,13 +20,48 @@ from components.performance_panel import render_performance_panel
 from components.progress import AnalysisProgress, render_analysis_error
 from components.tabs import create_main_tabs
 from services.cache_service import (
-    get_cached_asset_history,
+    get_cached_asset_history_with_metadata,
     get_cached_currencies,
     get_cached_news,
 )
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
 )
+
+
+def render_data_source_notice(metadata) -> None:
+    """Piyasa verisinin kaynak ve lisans durumunu kullanıcıya gösterir."""
+    if metadata is None:
+        return
+
+    source_name = getattr(metadata, "source_name", "Bilinmiyor")
+    provider_type = getattr(metadata, "provider_type", "Bilinmiyor")
+    license_status = getattr(metadata, "license_status", "Bilinmiyor")
+    is_production_allowed = bool(
+        getattr(metadata, "is_production_allowed", False)
+    )
+    data_delay = getattr(metadata, "data_delay", "Bilinmiyor")
+    note = getattr(metadata, "note", "")
+
+    production_label = "Evet" if is_production_allowed else "Hayır"
+    provider_label = str(provider_type).title()
+
+    message = (
+        f"📡 Veri kaynağı: {source_name} | "
+        f"Durum: {provider_label} | "
+        f"Üretime uygun: {production_label} | "
+        f"Lisans: {license_status} | "
+        f"Gecikme: {data_delay}"
+    )
+
+    if is_production_allowed:
+        st.success(message)
+    else:
+        st.warning(message)
+
+    if note:
+        st.caption(note)
+
 
 def render_analysis_tabs(
     data,
@@ -74,7 +109,11 @@ def run_analysis(inputs) -> None:
     progress = AnalysisProgress()
 
     try:
-        data = get_cached_asset_history(inputs.market_symbol)
+        market_result = get_cached_asset_history_with_metadata(
+            inputs.market_symbol
+        )
+        data = market_result.get("data")
+        market_metadata = market_result.get("metadata")
         progress.update(30, "Finansal geçmiş yüklendi.")
 
         if data is None or data.empty:
@@ -112,6 +151,8 @@ def run_analysis(inputs) -> None:
 
         progress.update(80, "Risk metrikleri hesaplanıyor...")
         progress.complete()
+
+        render_data_source_notice(market_metadata)
 
         render_analysis_tabs(
             data=data,
