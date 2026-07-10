@@ -3,16 +3,20 @@
 
 Bu modül döviz kuru, piyasa geçmişi ve haber verilerini
 belirli sürelerle önbellekte tutar.
+
+Piyasa geçmişi artık doğrudan yfinance çağırmak yerine
+services.data_provider katmanı üzerinden alınır.
 """
 
 from typing import Any
 
 import pandas as pd
 import streamlit as st
-import yfinance as yf
 
+from core.market_calendar import normalize_asset_type
 from finans_motoru import get_kurlar
 from haber_motoru import canli_rss_haber_cek
+from services.data_provider import get_market_history
 
 
 @st.cache_data(ttl=900)
@@ -49,15 +53,51 @@ def get_cached_asset_history(
     Varlığın geçmiş piyasa verisini bir saat önbellekte tutar.
 
     Args:
-        symbol: Yahoo Finance varlık sembolü.
+        symbol: Piyasa veri sağlayıcı sembolü.
         period: İndirilecek geçmiş veri süresi.
 
     Returns:
         OHLCV piyasa verisini içeren DataFrame.
     """
-    data = yf.Ticker(symbol).history(period=period)
+    asset_type = normalize_asset_type(
+        market_symbol=symbol,
+    )
 
-    if data is None:
+    result = get_market_history(
+        symbol=symbol,
+        period=period,
+        asset_type=asset_type,
+    )
+
+    if result.is_empty:
         return pd.DataFrame()
 
-    return data
+    return result.data
+
+
+@st.cache_data(ttl=3600)
+def get_cached_asset_history_with_metadata(
+    symbol: str,
+    period: str = "10y",
+) -> dict[str, Any]:
+    """
+    Varlığın piyasa verisini kaynak bilgisiyle birlikte döndürür.
+
+    Bu fonksiyon henüz ana uygulama akışında zorunlu değildir.
+    Sonraki sprintte arayüzde veri kaynağı etiketi göstermek için
+    kullanılacaktır.
+    """
+    asset_type = normalize_asset_type(
+        market_symbol=symbol,
+    )
+
+    result = get_market_history(
+        symbol=symbol,
+        period=period,
+        asset_type=asset_type,
+    )
+
+    return {
+        "data": result.data,
+        "metadata": result.metadata,
+    }
