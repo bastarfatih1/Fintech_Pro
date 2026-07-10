@@ -222,7 +222,7 @@ def _render_ai_analysis(
 
     if parsed_result is None:
         st.markdown(
-            f"🤖 **Analiz Sonucu:** {_escape_html(analysis_result)}"
+            f"**AI Analiz Sonucu:** {_escape_html(analysis_result)}"
         )
         return
 
