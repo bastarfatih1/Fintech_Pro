@@ -13,6 +13,128 @@ import streamlit as st
 from charts.consensus import create_consensus_chart
 
 
+def _inject_consensus_premium_style() -> None:
+    """Konsensüs paneli için premium görünüm stillerini ekler."""
+    st.markdown(
+        """
+        <style>
+        .fp-panel-hero {
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 20px;
+            padding: 20px 22px;
+            margin: 8px 0 18px 0;
+            background:
+                radial-gradient(circle at top left, rgba(99, 102, 241, 0.22), transparent 34%),
+                radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.16), transparent 30%),
+                linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.90));
+            box-shadow: 0 16px 40px rgba(2, 6, 23, 0.22);
+        }
+        .fp-panel-eyebrow {
+            color: #a5b4fc;
+            font-size: 0.76rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            font-weight: 800;
+            margin-bottom: 7px;
+        }
+        .fp-panel-title {
+            color: #f8fafc;
+            font-size: 1.36rem;
+            font-weight: 850;
+            margin-bottom: 6px;
+        }
+        .fp-panel-subtitle {
+            color: #cbd5e1;
+            font-size: 0.94rem;
+            line-height: 1.55;
+            max-width: 900px;
+        }
+        .fp-signal-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+        .fp-signal-pill {
+            border: 1px solid rgba(226, 232, 240, 0.16);
+            border-radius: 999px;
+            padding: 6px 10px;
+            color: #e2e8f0;
+            background: rgba(15, 23, 42, 0.45);
+            font-size: 0.78rem;
+        }
+        .fp-section-note {
+            border-left: 4px solid #818cf8;
+            border-radius: 14px;
+            padding: 12px 14px;
+            background: rgba(99, 102, 241, 0.10);
+            color: #e2e8f0;
+            line-height: 1.55;
+            margin: 8px 0 16px 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_consensus_hero(forecast_data: Mapping[str, Any]) -> None:
+    """Konsensüs paneli için premium giriş alanı gösterir."""
+    model_weights = forecast_data.get("model_agirliklari", {})
+    backtest_status = str(
+        forecast_data.get("backtest_status", "Bilinmiyor")
+    )
+    calendar_name = str(
+        forecast_data.get("takvim_adi", "Takvim standardı yok")
+    )
+
+    active_models = 0
+    top_model = "Model yok"
+    top_weight = 0.0
+
+    if isinstance(model_weights, Mapping) and model_weights:
+        parsed_weights = []
+        for model_name, raw_weight in model_weights.items():
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError):
+                weight = 0.0
+
+            if weight > 0:
+                active_models += 1
+                parsed_weights.append((str(model_name), weight))
+
+        if parsed_weights:
+            top_model, top_weight = max(
+                parsed_weights,
+                key=lambda item: item[1],
+            )
+            top_model = _format_model_name(top_model)
+
+    _inject_consensus_premium_style()
+
+    st.markdown(
+        f"""
+        <div class="fp-panel-hero">
+            <div class="fp-panel-eyebrow">Consensus Intelligence Engine</div>
+            <div class="fp-panel-title">🎯 Model Konsensüsü & Senaryo Laboratuvarı</div>
+            <div class="fp-panel-subtitle">
+                Farklı modellerin çıktıları backtest, referans model ve stabilite filtresinden
+                geçirilerek tek bir okunabilir senaryo haritasına dönüştürülür.
+            </div>
+            <div class="fp-signal-row">
+                <div class="fp-signal-pill">⚖️ Aktif model: {active_models}</div>
+                <div class="fp-signal-pill">🏆 Lider ağırlık: {top_model} · %{top_weight * 100:.1f}</div>
+                <div class="fp-signal-pill">🧪 Backtest: {backtest_status}</div>
+                <div class="fp-signal-pill">🗓️ {calendar_name}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
 def _format_model_name(model_name: str) -> str:
     """Teknik model adını kullanıcı dostu biçime dönüştürür."""
     return str(model_name).replace("_", " ").title()
@@ -38,14 +160,17 @@ def _render_projection_notice(
         )
     )
 
-    st.info(
-        "ℹ️ " + projection_notice
+    st.markdown(
+        "<div class='fp-section-note'>ℹ️ "
+        + projection_notice
+        + "</div>",
+        unsafe_allow_html=True,
     )
-    st.caption(
-        "Senaryo bandı yöntemi: "
-        + confidence_method
-        + ". Gölge alan yatırım sonucu garantisi değildir."
-    )
+    with st.expander("Senaryo bandı yöntemi", expanded=False):
+        st.caption(
+            confidence_method
+            + ". Gölge alan yatırım sonucu garantisi değildir."
+        )
 
 
 def _render_model_statuses(
@@ -473,7 +598,7 @@ def render_consensus_panel(
     last_date: Any,
 ) -> None:
     """Konsensüs ve senaryo sekmesinin tamamını oluşturur."""
-    st.markdown("### 🎯 Model Konsensüsü & Senaryo Projeksiyonu")
+    _render_consensus_hero(forecast_data)
 
     required_keys = {
         "konsensus_rota",
