@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from charts.consensus import create_consensus_chart
+from components.ui_icons import icon_html
 
 
 def _inject_consensus_premium_style() -> None:
@@ -117,16 +118,16 @@ def _render_consensus_hero(forecast_data: Mapping[str, Any]) -> None:
         f"""
         <div class="fp-panel-hero">
             <div class="fp-panel-eyebrow">Consensus Intelligence Engine</div>
-            <div class="fp-panel-title">🎯 Model Konsensüsü & Senaryo Laboratuvarı</div>
+            <div class="fp-panel-title"><span class="fp-title-with-icon">{icon_html("consensus_mesh")}</span>Model Konsensüsü & Senaryo Laboratuvarı</div>
             <div class="fp-panel-subtitle">
                 Farklı modellerin çıktıları backtest, referans model ve stabilite filtresinden
                 geçirilerek tek bir okunabilir senaryo haritasına dönüştürülür.
             </div>
             <div class="fp-signal-row">
-                <div class="fp-signal-pill">⚖️ Aktif model: {active_models}</div>
-                <div class="fp-signal-pill">🏆 Lider ağırlık: {top_model} · %{top_weight * 100:.1f}</div>
-                <div class="fp-signal-pill">🧪 Backtest: {backtest_status}</div>
-                <div class="fp-signal-pill">🗓️ {calendar_name}</div>
+                <div class="fp-signal-pill"><span class="fp-pill-with-icon">{icon_html("signal_node", "fp-icon-small")}</span>Aktif model: {active_models}</div>
+                <div class="fp-signal-pill"><span class="fp-pill-with-icon">{icon_html("consensus_mesh", "fp-icon-small")}</span>Lider ağırlık: {top_model} · %{top_weight * 100:.1f}</div>
+                <div class="fp-signal-pill"><span class="fp-pill-with-icon">{icon_html("performance_curve", "fp-icon-small")}</span>Backtest: {backtest_status}</div>
+                <div class="fp-signal-pill"><span class="fp-pill-with-icon">{icon_html("scenario_path", "fp-icon-small")}</span>{calendar_name}</div>
             </div>
         </div>
         """,
@@ -161,7 +162,7 @@ def _render_projection_notice(
     )
 
     st.markdown(
-        "<div class='fp-section-note'>ℹ️ "
+        "<div class='fp-section-note'>Bilgi: "
         + projection_notice
         + "</div>",
         unsafe_allow_html=True,
@@ -234,7 +235,7 @@ def _render_model_statuses(
 
     if failed_models:
         with st.expander(
-            f"⚠️ Başarısız model ayrıntıları ({failed_count})",
+            f"Başarısız model ayrıntıları ({failed_count})",
             expanded=False,
         ):
             for model_name, error_message in failed_models:
@@ -249,7 +250,7 @@ def _render_model_weights(
     backtest_table: Any,
 ) -> None:
     """Dinamik konsensüs ağırlıklarını model bazında gösterir."""
-    st.markdown("#### ⚖️ Dinamik Model Ağırlıkları")
+    st.markdown("#### Dinamik Model Ağırlıkları")
 
     if not isinstance(model_weights, Mapping) or not model_weights:
         st.info("Gösterilecek model ağırlığı bulunamadı.")
@@ -437,7 +438,7 @@ def _render_backtest_results(
     backtest_status: Any,
 ) -> None:
     """Backtest sonuçlarını özetler ve tablo halinde gösterir."""
-    st.markdown("#### 🧪 Geçmiş Performans Testi")
+    st.markdown("#### Geçmiş Performans Testi")
 
     status_text = str(backtest_status)
 

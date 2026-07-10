@@ -25,7 +25,7 @@ def render_analysis_button() -> bool:
         Analiz aktifse True döndürür.
     """
     clicked = st.button(
-        "🚀 Kurumsal Gelişmiş AI Projeksiyonunu Başlat",
+        "Kurumsal AI Projeksiyonunu Başlat",
         use_container_width=True,
         type="primary",
     )

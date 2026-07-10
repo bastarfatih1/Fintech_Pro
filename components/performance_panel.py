@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from finans_motoru import hesapla_gecmis_performans
+from components.ui_icons import icon_html
 
 def _inject_performance_premium_style() -> None:
     """Performans paneli için premium görünüm stillerini ekler."""
@@ -112,15 +113,15 @@ def _render_performance_hero(
         f"""
         <div class="fp-perf-hero">
             <div class="fp-perf-eyebrow">Historical Performance Lens</div>
-            <div class="fp-perf-title">📊 Tarihsel Performans & Reel Getiri Penceresi</div>
+            <div class="fp-perf-title"><span class="fp-title-with-icon">{icon_html("performance_curve")}</span>Tarihsel Performans & Reel Getiri Penceresi</div>
             <div class="fp-perf-subtitle">
                 Seçili varlığın geçmiş dönem performansı, sermaye karşılığı ve
                 reel getiri görünümü tek tabloda karşılaştırılır.
             </div>
             <div class="fp-perf-pill-row">
-                <div class="fp-perf-pill">💼 Sermaye: {investment_amount:,.2f} {currency_symbol}</div>
-                <div class="fp-perf-pill">🏆 En güçlü dönem: {best_period} · {best_return:+.2f}%</div>
-                <div class="fp-perf-pill">🧭 En zayıf dönem: {worst_period} · {worst_return:+.2f}%</div>
+                <div class="fp-perf-pill"><span class="fp-pill-with-icon">{icon_html("capital_stack", "fp-icon-small")}</span>Sermaye: {investment_amount:,.2f} {currency_symbol}</div>
+                <div class="fp-perf-pill"><span class="fp-pill-with-icon">{icon_html("performance_curve", "fp-icon-small")}</span>En güçlü dönem: {best_period} · {best_return:+.2f}%</div>
+                <div class="fp-perf-pill"><span class="fp-pill-with-icon">{icon_html("risk_shield", "fp-icon-small")}</span>En zayıf dönem: {worst_period} · {worst_return:+.2f}%</div>
             </div>
         </div>
         """,

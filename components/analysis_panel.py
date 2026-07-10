@@ -13,6 +13,7 @@ import streamlit as st
 from charts.candlestick import create_price_volume_chart
 from charts.rsi import analyze_rsi
 from components.metrics import render_risk_metrics
+from components.ui_icons import icon_html
 from haber_motoru import ai_teknik_analiz_yorumu
 
 
@@ -383,16 +384,16 @@ def _render_professional_summary(
         f"""
         <div class="fp-hero">
             <div class="fp-eyebrow">Fintech Pro Intelligence Layer</div>
-            <div class="fp-title">📌 Profesyonel Analiz Özeti</div>
+            <div class="fp-title"><span class="fp-title-with-icon">{icon_html("insight_lens")}</span>Profesyonel Analiz Özeti</div>
             <div class="fp-subtitle">
                 Model konsensüsü, backtest kalitesi, risk profili ve senaryo aralığı
                 tek ekranda okunabilir bir karar paneline dönüştürüldü.
             </div>
             <div class="fp-pill-row">
-                <div class="fp-pill">🎯 {horizon}</div>
-                <div class="fp-pill">🧠 Model Güveni %{confidence:.1f}</div>
-                <div class="fp-pill">🛡️ Risk: {risk_level}</div>
-                <div class="fp-pill">✨ {badge}</div>
+                <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("scenario_path", "fp-icon-small")}</span>{horizon}</div>
+                <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("consensus_mesh", "fp-icon-small")}</span>Model Güveni %{confidence:.1f}</div>
+                <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("risk_shield", "fp-icon-small")}</span>Risk: {risk_level}</div>
+                <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("signal_node", "fp-icon-small")}</span>{badge}</div>
             </div>
         </div>
         """,
@@ -479,11 +480,11 @@ def _render_rsi_status(close_prices: pd.Series) -> None:
         return
 
     if rsi_result.status == "overbought":
-        st.warning(f"⚠️ {rsi_result.message}")
+        st.warning(f"RSI uyarısı: {rsi_result.message}")
     elif rsi_result.status == "oversold":
-        st.success(f"✅ {rsi_result.message}")
+        st.success(f"RSI sinyali: {rsi_result.message}")
     else:
-        st.info(f"ℹ️ {rsi_result.message}")
+        st.info(f"RSI durumu: {rsi_result.message}")
 
 
 def _render_ai_summary(
@@ -507,7 +508,7 @@ def _render_ai_summary(
         )
         return
 
-    st.info(f"**🤖 AI Sentezi:** {ai_summary}")
+    st.info(f"**AI Sentezi:** {ai_summary}")
 
 
 def render_analysis_panel(
@@ -537,7 +538,7 @@ def render_analysis_panel(
         )
         return
 
-    st.markdown(f"### 📡 {asset_name} - Merkezi Terminal")
+    st.markdown(f"### {asset_name} - Merkezi Terminal")
 
     _render_professional_summary(
         current_price=current_price,

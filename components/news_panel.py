@@ -11,6 +11,7 @@ from typing import Any, Optional, Tuple
 import streamlit as st
 
 from haber_motoru import ai_etki_analizi
+from components.ui_icons import icon_html
 
 
 def _inject_news_premium_style() -> None:
@@ -98,15 +99,15 @@ def _render_news_hero(
         f"""
         <div class="fp-news-hero">
             <div class="fp-news-eyebrow">Market Narrative Radar</div>
-            <div class="fp-news-title">📰 Haber Akışı & AI Duyarlılık Radarı</div>
+            <div class="fp-news-title"><span class="fp-title-with-icon">{icon_html("news_radar")}</span>Haber Akışı & AI Duyarlılık Radarı</div>
             <div class="fp-news-subtitle">
                 {asset_name} için haber başlıkları taranır, AI etki analiziyle
                 pozitif / negatif / nötr sinyaller kısa ve okunabilir biçimde sunulur.
             </div>
             <div class="fp-news-pill-row">
-                <div class="fp-news-pill">🗞️ Haber sayısı: {news_count}</div>
-                <div class="fp-news-pill">🤖 AI etki analizi</div>
-                <div class="fp-news-pill">⚡ Hızlı duyarlılık okuması</div>
+                <div class="fp-news-pill"><span class="fp-pill-with-icon">{icon_html("news_radar", "fp-icon-small")}</span>Haber sayısı: {news_count}</div>
+                <div class="fp-news-pill"><span class="fp-pill-with-icon">{icon_html("ai_core", "fp-icon-small")}</span>AI etki analizi</div>
+                <div class="fp-news-pill"><span class="fp-pill-with-icon">{icon_html("signal_node", "fp-icon-small")}</span>Hızlı duyarlılık okuması</div>
             </div>
         </div>
         """,
@@ -193,7 +194,7 @@ def _render_news_card(news_item: Mapping[str, Any]) -> None:
             "style='color:#00bbff; text-decoration:none;'>"
             f"{title}</a></h4>"
             "<p style='color:#a0a0a0; font-size:12px;'>"
-            f"📰 Kaynak: {media} | 📅 Tarih: {date}"
+            f"Kaynak: {media} | Tarih: {date}"
             "</p></div>"
         ),
         unsafe_allow_html=True,
@@ -235,7 +236,7 @@ def _render_ai_analysis(
             f"{_escape_html(direction)}</span> | "
             f"**Etki:** %{_escape_html(impact)} | "
             f"**AI Güven Skoru:** {_escape_html(confidence)}/100"
-            f"<br>📝 *Özet:* {_escape_html(summary)}"
+            f"<br>*Özet:* {_escape_html(summary)}"
             "</div>"
         ),
         unsafe_allow_html=True,

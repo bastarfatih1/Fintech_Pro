@@ -6,6 +6,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import streamlit as st
+from components.ui_theme import inject_global_premium_theme
 from components.header import render_market_ticker
 from components.input_panel import render_input_panel
 from components.sidebar import render_sidebar_header
@@ -48,11 +49,11 @@ def render_data_source_notice(metadata) -> None:
 
     if fallback_used:
         st.warning(
-            f"📡 Veri kaynağı: {source_name} | Fallback kullanıldı."
+            f"Veri kaynağı: {source_name} | Fallback kullanıldı."
         )
     else:
         st.caption(
-            f"📡 Veri: {source_name} · {provider_label}"
+            f"Veri: {source_name} · {provider_label}"
         )
 
     with st.expander("Veri kaynağı detayı", expanded=False):
@@ -88,11 +89,11 @@ def render_currency_source_notice(metadata) -> None:
 
     if fallback_used:
         st.warning(
-            f"💱 Kur kaynağı: {source_name} | Fallback kur tablosu kullanıldı."
+            f"Kur kaynağı: {source_name} | Fallback kur tablosu kullanıldı."
         )
     else:
         st.caption(
-            f"💱 Kur: {source_name} · {provider_label}"
+            f"Kur: {source_name} · {provider_label}"
         )
 
     with st.expander("Kur kaynağı detayı", expanded=False):
@@ -216,6 +217,7 @@ def run_analysis(inputs) -> None:
 def main() -> None:
     """Streamlit uygulamasının ana çalışma akışı."""
     initialize_application()
+    inject_global_premium_theme()
     render_market_ticker()
     render_sidebar_header()
 
