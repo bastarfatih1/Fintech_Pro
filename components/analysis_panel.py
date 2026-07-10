@@ -309,11 +309,11 @@ def _build_general_status(
     band_width = ((upper_target - lower_target) / current) * 100.0
 
     if base_return > 5:
-        direction = "Model baz senaryosu pozitif eğilim gösteriyor"
+        direction = "Baz senaryo pozitif yönde ayrışıyor"
     elif base_return < -5:
-        direction = "Model baz senaryosu negatif eğilim gösteriyor"
+        direction = "Baz senaryo negatif yönde ayrışıyor"
     else:
-        direction = "Model baz senaryosu yatay / sınırlı eğilim gösteriyor"
+        direction = "Baz senaryo sınırlı değişim gösteriyor"
 
     if band_width > 35:
         uncertainty = "belirsizlik yüksek"
@@ -384,10 +384,10 @@ def _render_professional_summary(
         f"""
         <div class="fp-hero">
             <div class="fp-eyebrow">Fintech Pro Intelligence Layer</div>
-            <div class="fp-title"><span class="fp-title-with-icon">{icon_html("insight_lens")}</span>Profesyonel Analiz Özeti</div>
+            <div class="fp-title"><span class="fp-title-with-icon">{icon_html("insight_lens")}</span>Veri Odaklı Analiz Özeti</div>
             <div class="fp-subtitle">
-                Model konsensüsü, backtest kalitesi, risk profili ve senaryo aralığı
-                tek ekranda okunabilir bir karar paneline dönüştürüldü.
+                Model konsensüsü, backtest sonuçları, risk profili ve senaryo aralığı
+                tek ekranda okunabilir bir değerlendirme özetine dönüştürüldü.
             </div>
             <div class="fp-pill-row">
                 <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("scenario_path", "fp-icon-small")}</span>{horizon}</div>
@@ -408,7 +408,7 @@ def _render_professional_summary(
             <div class="fp-card">
                 <div class="fp-card-label">Güncel Fiyat</div>
                 <div class="fp-card-value">{_format_money(current_display)}</div>
-                <div class="fp-card-delta-neutral">Canlı veri üzerinden hesaplandı</div>
+                <div class="fp-card-delta-neutral">Seçili veri kaynağına göre hesaplandı</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -421,7 +421,7 @@ def _render_professional_summary(
             <div class="fp-card">
                 <div class="fp-card-label">Baz Senaryo · {horizon}</div>
                 <div class="fp-card-value">{_format_money(base_target)}</div>
-                <div class="{delta_class}">{nominal_return:+.2f}% model getirisi</div>
+                <div class="{delta_class}">{nominal_return:+.2f}% senaryo farkı</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -459,8 +459,10 @@ def _render_professional_summary(
             <strong>Genel durum:</strong> {general_status}
             <br/>
             <span class="fp-mini-note">
-                Bu alan yatırım tavsiyesi değildir; yalnızca model çıktısını,
-                risk görünümünü ve belirsizliği sadeleştirir.
+                Model güven skoru; geçmiş veri üzerindeki tutarlılık,
+                backtest sonucu ve model ağırlıklarına dayanan istatistiksel
+                bir göstergedir. Risk seviyesi tarihsel oynaklık ve düşüş
+                metriklerini özetler. Bu alan yatırım tavsiyesi değildir.
             </span>
         </div>
         """,
@@ -508,7 +510,7 @@ def _render_ai_summary(
         )
         return
 
-    st.info(f"**AI Sentezi:** {ai_summary}")
+    st.info(f"**Analiz Sentezi:** {ai_summary}")
 
 
 def render_analysis_panel(
