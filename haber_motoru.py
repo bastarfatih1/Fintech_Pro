@@ -85,7 +85,7 @@ def ollama_ai_cagir(prompt, timeout=2.0):
     return ai_text_call(prompt, timeout=timeout)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def ai_teknik_analiz_yorumu(enstruman, anlik, boga, ayi):
     """
     Teknik analiz yorumunu aktif AI sağlayıcısından alır.
@@ -111,7 +111,7 @@ def ai_teknik_analiz_yorumu(enstruman, anlik, boga, ayi):
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def ai_etki_analizi(baslik, varlik):
     """
     Tek haber için eski formatta AI analizi döndürür.
@@ -144,7 +144,7 @@ def ai_etki_analizi(baslik, varlik):
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def ai_haberleri_toplu_analiz_et(
     varlik,
     haberler,
@@ -167,7 +167,7 @@ def ai_haberleri_toplu_analiz_et(
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def ai_toplu_model_yorumlari(enstruman, anlik, vade, modeller_verisi):
     modeller_metni = "\n".join(
         [f"- {m}: {hedef:.2f}" for m, hedef in modeller_verisi.items()]

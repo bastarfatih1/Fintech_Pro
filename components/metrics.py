@@ -9,6 +9,8 @@ from typing import Mapping
 
 import streamlit as st
 
+from components.education_layer import render_risk_deep_explanation
+
 
 def _safe_float(value: float, default: float = 0.0) -> float:
     """Sayısal değeri güvenli şekilde float'a çevirir."""
@@ -76,13 +78,13 @@ def _inject_risk_card_style() -> None:
         }
         .fp-risk-label {
             color: #94a3b8;
-            font-size: 0.74rem;
+            font-size: 0.84rem;
             font-weight: 780;
             margin-bottom: 7px;
         }
         .fp-risk-value {
             color: #f8fafc;
-            font-size: 1.16rem;
+            font-size: 1.34rem;
             font-weight: 880;
             line-height: 1.1;
             margin-bottom: 9px;
@@ -92,7 +94,7 @@ def _inject_risk_card_style() -> None:
             align-items: center;
             border-radius: 999px;
             padding: 4px 8px;
-            font-size: 0.72rem;
+            font-size: 0.82rem;
             font-weight: 850;
             border: 1px solid rgba(226, 232, 240, 0.14);
             background: rgba(15, 23, 42, 0.48);
@@ -109,7 +111,7 @@ def _inject_risk_card_style() -> None:
         }
         .fp-risk-note {
             color: #94a3b8;
-            font-size: 0.72rem;
+            font-size: 0.82rem;
             line-height: 1.35;
             margin-top: 4px;
         }
@@ -193,7 +195,7 @@ def render_risk_metrics(stats: Mapping[str, float]) -> None:
             value=f"%{max_drawdown * 100:.2f}",
             badge=drawdown_badge,
             tone=drawdown_tone,
-            note="Zirveden görülen en büyük tarihsel düşüş.",
+            note="Geçmişte zirveden dibe en büyük geri çekilme.",
         )
 
     with col2:
@@ -202,7 +204,7 @@ def render_risk_metrics(stats: Mapping[str, float]) -> None:
             value=f"%{var_value * 100:.2f}",
             badge=var_badge,
             tone=var_tone,
-            note="Normal koşullarda günlük kayıp eşiği.",
+            note="Normal günlerde beklenen kötü kayıp eşiği.",
         )
 
     with col3:
@@ -211,7 +213,7 @@ def render_risk_metrics(stats: Mapping[str, float]) -> None:
             value=f"{sharpe:.2f}",
             badge=sharpe_badge,
             tone=sharpe_tone,
-            note="Toplam riske karşı getiri verimliliği.",
+            note="Alınan toplam riske karşı getiri kalitesi.",
         )
 
     with col4:
@@ -220,7 +222,7 @@ def render_risk_metrics(stats: Mapping[str, float]) -> None:
             value=f"{sortino:.2f}",
             badge=sortino_badge,
             tone=sortino_tone,
-            note="Aşağı yönlü riske göre getiri verimliliği.",
+            note="Özellikle kötü düşüşlere göre getiri kalitesi.",
         )
 
     with col5:
@@ -231,3 +233,14 @@ def render_risk_metrics(stats: Mapping[str, float]) -> None:
             tone=beta_tone,
             note="Piyasa hareketlerine duyarlılık göstergesi.",
         )
+
+    render_risk_deep_explanation(
+        max_drawdown=max_drawdown,
+        var_value=var_value,
+        sharpe=sharpe,
+        sortino=sortino,
+        beta=beta,
+    )
+
+
+# Not: render_risk_metrics içinde terim kartları ana panellerde ayrıca gösterilir.

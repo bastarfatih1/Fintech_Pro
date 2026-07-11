@@ -281,7 +281,7 @@ def create_consensus_chart(
         annotations=[
             {
                 "text": (
-                    "Gölge alan kesin fiyat garantisi değildir. "
+                    "Gölge alan olası fiyat aralığını gösterir; kesin fiyat garantisi değildir. "
                     + confidence_method
                     + " | Takvim: "
                     + calendar_config.calendar_name

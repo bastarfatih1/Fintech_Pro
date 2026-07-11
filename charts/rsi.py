@@ -88,7 +88,7 @@ def analyze_rsi(
             status="overbought",
             message=(
                 f"RSI {value:.1f} seviyesinde. "
-                "Varlık aşırı alım bölgesinde olabilir. "
+                "Fiyat son dönemde hızlı yükselmiş ve kısa vadede fazla ısınmış olabilir. "
                 "Bu tek başına satış sinyali değildir."
             ),
         )
@@ -99,7 +99,7 @@ def analyze_rsi(
             status="oversold",
             message=(
                 f"RSI {value:.1f} seviyesinde. "
-                "Varlık aşırı satım bölgesinde olabilir. "
+                "Fiyat son dönemde hızlı düşmüş ve kısa vadede fazla zayıflamış olabilir. "
                 "Bu tek başına alış sinyali değildir."
             ),
         )
@@ -109,6 +109,6 @@ def analyze_rsi(
         status="neutral",
         message=(
             f"RSI {value:.1f} seviyesinde. "
-            "Momentum nötr bölgede ve belirgin bir aşırılık göstermiyor."
+            "Fiyat hareketinin hızı şu an orta bölgede; belirgin aşırı ısınma veya aşırı zayıflama görünmüyor."
         ),
     )

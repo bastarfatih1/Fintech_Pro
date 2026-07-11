@@ -12,6 +12,7 @@ import streamlit as st
 
 from charts.consensus import create_consensus_chart
 from components.ui_icons import icon_html
+from components.education_layer import render_chart_explanation, render_table_explanation, render_term_grid
 
 
 def _inject_consensus_premium_style() -> None:
@@ -373,6 +374,14 @@ def _render_model_weights(
         "Naive Last Price referans modelini geçme koşuluna göre "
         "hesaplanır. Referansı geçemeyen model ağırlık alamaz."
     )
+    render_table_explanation(
+        table_name="Dinamik Model Ağırlıkları",
+        plain_text=(
+            "Bu tablo hangi modelin ortak tahmine ne kadar katkı verdiğini gösterir. "
+            "Geçmiş testlerde daha tutarlı görünen model daha fazla ağırlık alabilir."
+        ),
+        terms=["Model Ağırlığı", "Backtest", "RMSE", "Yön Doğruluğu", "Stabilite Skoru"],
+    )
 
 
 def _render_future_values(
@@ -430,6 +439,15 @@ def _render_future_values(
         "Baz senaryo ağırlıklı model konsensüsüdür. "
         "Kötümser ve iyimser değerler geçmiş backtest hatalarıyla "
         "kalibre edilmiş belirsizlik sınırlarıdır."
+    )
+    render_table_explanation(
+        table_name="Detaylı Gelecek Senaryoları",
+        plain_text=(
+            "Bu tablo seçili vadelerde kötü, baz ve iyi senaryoda fiyatın nerelere "
+            "gidebileceğini gösterir. Buradaki değerler kesin tahmin değil, olası "
+            "senaryo aralıklarıdır."
+        ),
+        terms=["Baz Senaryo", "Boğa Senaryosu", "Ayı Senaryosu", "Senaryo Bandı"],
     )
 
 

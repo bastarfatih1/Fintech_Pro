@@ -21,7 +21,7 @@ import requests
 import streamlit as st
 
 
-DEFAULT_TIMEOUT = 90.0
+DEFAULT_TIMEOUT = 150.0
 LAST_AI_ERROR = ""
 
 
@@ -36,6 +36,19 @@ def _get_secret_value(key: str, default: str = "") -> str:
         return str(value)
 
     return str(os.getenv(key, default))
+
+
+
+
+def _get_int_secret_value(key: str, default: int) -> int:
+    """Secret/env içinden güvenli integer değer okur."""
+    raw_value = _get_secret_value(key, str(default))
+    try:
+        value = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return default
+
+    return max(128, min(value, 4000))
 
 
 def get_ai_provider_name() -> str:
@@ -69,6 +82,9 @@ def get_last_ai_error() -> str:
 
 def _call_ollama(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
     """Lokal Ollama API çağrısı yapar."""
+    global LAST_AI_ERROR
+    LAST_AI_ERROR = ""
+
     model = _get_secret_value("OLLAMA_MODEL", "")
     if not model:
         model = st.session_state.get("USER_GEMINI_MODEL", "llama3")
@@ -84,15 +100,20 @@ def _call_ollama(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
         "stream": False,
         "options": {
             "temperature": 0.1,
-            "num_predict": 2000,
+            "num_predict": _get_int_secret_value("OLLAMA_NUM_PREDICT", 1200),
         },
     }
 
     try:
         response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
-        return str(response.json().get("response", "")).strip() or None
-    except Exception:
+        content = str(response.json().get("response", "")).strip()
+        if not content:
+            LAST_AI_ERROR = "Ollama yanıtı boş geldi."
+            return None
+        return content
+    except Exception as exc:
+        LAST_AI_ERROR = f"Ollama bağlantı/yanıt hatası: {type(exc).__name__}: {exc}"
         return None
 
 
@@ -224,7 +245,7 @@ def _call_groq(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
             },
         ],
         "temperature": 0.1,
-        "max_tokens": 700,
+        "max_tokens": 1200,
         "response_format": {"type": "json_object"},
     }
 
@@ -319,6 +340,74 @@ def _extract_json_object(raw_text: str | None) -> dict[str, Any] | None:
     return None
 
 
+def _classify_news_locally(title: str) -> dict[str, Any]:
+    """AI erişilemediğinde haber başlığını basit anahtar kelimelerle yorumlar."""
+    lowered = str(title or "").lower()
+
+    positive_words = (
+        "yükseldi",
+        "arttı",
+        "artış",
+        "rekor",
+        "güçlendi",
+        "pozitif",
+        "talep",
+        "destek",
+        "alıcılı",
+        "toparlan",
+        "kazanç",
+    )
+    negative_words = (
+        "düştü",
+        "düşüş",
+        "geriledi",
+        "satış",
+        "kayıp",
+        "zayıf",
+        "baskı",
+        "risk",
+        "kriz",
+        "belirsiz",
+        "faiz",
+        "sert",
+    )
+
+    positive_score = sum(1 for word in positive_words if word in lowered)
+    negative_score = sum(1 for word in negative_words if word in lowered)
+
+    if positive_score > negative_score:
+        return {
+            "direction": "POZİTİF",
+            "impact": 20,
+            "confidence": 55,
+            "summary": (
+                "AI sağlayıcısı yanıt vermediği için yerel haber okuması kullanıldı. "
+                "Başlıktaki olumlu ifadeler kısa vadeli algıyı destekleyebilir."
+            ),
+        }
+
+    if negative_score > positive_score:
+        return {
+            "direction": "NEGATİF",
+            "impact": -20,
+            "confidence": 55,
+            "summary": (
+                "AI sağlayıcısı yanıt vermediği için yerel haber okuması kullanıldı. "
+                "Başlıktaki olumsuz ifadeler risk veya baskı ihtimalini artırabilir."
+            ),
+        }
+
+    return {
+        "direction": "NÖTR",
+        "impact": 0,
+        "confidence": 50,
+        "summary": (
+            "AI sağlayıcısı yanıt vermediği için yerel haber okuması kullanıldı. "
+            "Başlık tek başına güçlü pozitif veya negatif etki göstermiyor."
+        ),
+    }
+
+
 def build_fallback_ai_bundle(
     asset_name: str,
     current_price: float,
@@ -326,22 +415,40 @@ def build_fallback_ai_bundle(
     bear_target: float,
     news_items: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """AI çalışmadığında uygulamanın bozulmaması için güvenli varsayılan üretir."""
+    """AI çalışmadığında uygulamanın bozulmaması için yerel yorum üretir."""
     news_items = list(news_items or [])
 
     news_analysis = []
+    direction_counts = {"POZİTİF": 0, "NEGATİF": 0, "NÖTR": 0}
+
     for item in news_items[:6]:
+        headline = str(item.get("title", "Başlıksız Haber"))
+        local_result = _classify_news_locally(headline)
+        direction_counts[local_result["direction"]] += 1
         news_analysis.append(
             {
-                "headline": str(item.get("title", "Başlıksız Haber")),
-                "direction": "NÖTR",
-                "impact": 0,
-                "confidence": 50,
-                "summary": (
-                    "AI sağlayıcısı kullanılamadığı için haber etkisi nötr "
-                    "varsayıldı."
-                ),
+                "headline": headline,
+                **local_result,
             }
+        )
+
+    if direction_counts["POZİTİF"] > direction_counts["NEGATİF"]:
+        overall_effect = "POZİTİF"
+        effect_summary = (
+            "AI sağlayıcısı yanıt vermedi; yerel haber okumasında olumlu başlıklar "
+            "biraz daha baskın görünüyor."
+        )
+    elif direction_counts["NEGATİF"] > direction_counts["POZİTİF"]:
+        overall_effect = "NEGATİF"
+        effect_summary = (
+            "AI sağlayıcısı yanıt vermedi; yerel haber okumasında risk veya baskı "
+            "içeren başlıklar biraz daha baskın görünüyor."
+        )
+    else:
+        overall_effect = "NÖTR"
+        effect_summary = (
+            "AI sağlayıcısı yanıt vermedi; yerel haber okuması güçlü bir haber yönü "
+            "göstermiyor."
         )
 
     return {
@@ -350,25 +457,22 @@ def build_fallback_ai_bundle(
             f"{bull_target:.2f}, ayı senaryosu {bear_target:.2f} seviyesinde."
         ),
         "market_synthesis": (
-            "AI sağlayıcısı geçici olarak kullanılamıyor. Sonuçlar model "
-            "çıktıları ve tarihsel metrikler üzerinden okunmalıdır."
+            "AI sağlayıcısı yanıt vermediği için bu bölüm yerel otomatik haber "
+            "okuması ve model çıktılarıyla dolduruldu."
         ),
         "risk_note": (
             "Bu çıktı yatırım tavsiyesi değildir; yalnızca veri analizi ve "
             "senaryo değerlendirmesi amacı taşır."
         ),
-        "overall_news_effect": "NÖTR",
-        "news_effect_summary": (
-            "AI sağlayıcısı kullanılamadığı için haber etkisi genel analizde "
-            "nötr kabul edildi."
-        ),
+        "overall_news_effect": overall_effect,
+        "news_effect_summary": effect_summary,
         "news_analysis": news_analysis,
-        "provider": "fallback",
+        "provider": "local_fallback",
         "provider_error": get_last_ai_error(),
     }
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def ai_single_prompt_analysis(
     asset_name: str,
     current_price: float,
@@ -393,42 +497,39 @@ def ai_single_prompt_analysis(
     news_text = "\n".join(news_lines) if news_lines else "Haber bulunamadı."
 
     prompt = f"""
+Sadece geçerli JSON döndür. Markdown, açıklama veya kod bloğu yazma.
+
 Varlık: {asset_name}
 Güncel fiyat: {current_price:.4f}
-Boğa senaryosu: {bull_target:.4f}
-Ayı senaryosu: {bear_target:.4f}
+Olumlu senaryo: {bull_target:.4f}
+Olumsuz senaryo: {bear_target:.4f}
 
 Haberler:
 {news_text}
 
-Görev:
-Teknik özet, piyasa sentezi, risk notu ve haber bazlı duyarlılık analizi üret.
-
 Kurallar:
 - Türkçe yaz.
 - Yatırım tavsiyesi verme.
-- Al / sat / tut ifadeleri kullanma.
-- Kesinlik veya garanti dili kullanma.
-- Sadece ham JSON objesi döndür.
-- JSON dışında açıklama, giriş cümlesi, markdown veya kod bloğu yazma.
-- Cevap doğrudan {{ karakteri ile başlamalı ve }} karakteri ile bitmeli.
-- news_analysis dizisinde her haber için tam olarak 1 analiz objesi olmalı.
-- Haber sayısı kadar analiz döndür; eksik haber bırakma.
+- Al / sat / tut deme.
+- Her haber için tam 1 kısa yorum yaz.
+- direction sadece POZİTİF, NEGATİF veya NÖTR olsun.
+- impact -100 ile 100 arasında sayı olsun.
+- confidence 0 ile 100 arasında sayı olsun.
 
-JSON şeması:
+JSON:
 {{
-  "technical_summary": "Tek cümlelik teknik özet",
-  "market_synthesis": "Kısa genel sentez",
-  "risk_note": "Kısa risk ve sorumluluk notu",
-  "overall_news_effect": "POZİTİF veya NEGATİF veya NÖTR",
-  "news_effect_summary": "Haberlerin genel analize etkisini açıklayan kısa cümle",
+  "technical_summary": "1 cümle teknik özet",
+  "market_synthesis": "1 cümle genel sentez",
+  "risk_note": "1 cümle risk notu",
+  "overall_news_effect": "POZİTİF",
+  "news_effect_summary": "1 cümle haber etkisi özeti",
   "news_analysis": [
     {{
-      "headline": "Haber başlığı",
-      "direction": "POZİTİF veya NEGATİF veya NÖTR",
-      "impact": 0,
-      "confidence": 50,
-      "summary": "Kısa haber etkisi"
+      "headline": "haber başlığı",
+      "direction": "POZİTİF",
+      "impact": 20,
+      "confidence": 60,
+      "summary": "1 cümle haber yorumu"
     }}
   ]
 }}
@@ -438,13 +539,45 @@ JSON şeması:
     parsed = _extract_json_object(raw_response)
 
     if not parsed:
+        compact_prompt = f"""
+Sadece geçerli JSON döndür. Markdown yazma.
+
+Varlık: {asset_name}
+Fiyat: {current_price:.4f}
+Olumlu senaryo: {bull_target:.4f}
+Olumsuz senaryo: {bear_target:.4f}
+
+Haberler:
+{news_text}
+
+JSON şeması:
+{{
+  "technical_summary": "kısa teknik özet",
+  "market_synthesis": "kısa piyasa sentezi",
+  "risk_note": "kısa risk notu",
+  "overall_news_effect": "POZİTİF veya NEGATİF veya NÖTR",
+  "news_effect_summary": "kısa haber özeti",
+  "news_analysis": [
+    {{
+      "headline": "haber başlığı",
+      "direction": "POZİTİF veya NEGATİF veya NÖTR",
+      "impact": 0,
+      "confidence": 50,
+      "summary": "kısa yorum"
+    }}
+  ]
+}}
+"""
+        raw_response = ai_text_call(compact_prompt, timeout=DEFAULT_TIMEOUT)
+        parsed = _extract_json_object(raw_response)
+
+    if not parsed:
         global LAST_AI_ERROR
         if raw_response and not LAST_AI_ERROR:
             LAST_AI_ERROR = (
                 "AI yanıtı geldi ama JSON formatına çevrilemedi. "
                 f"İlk karakterler: {raw_response[:300]}"
             )
-            pass
 
         return build_fallback_ai_bundle(
             asset_name=asset_name,
@@ -473,13 +606,12 @@ JSON şeması:
         ):
             normalized_analysis.append(dict(parsed["news_analysis"][index]))
         else:
+            headline = str(item.get("title", "Başlıksız Haber"))
+            local_result = _classify_news_locally(headline)
             normalized_analysis.append(
                 {
-                    "headline": str(item.get("title", "Başlıksız Haber")),
-                    "direction": "NÖTR",
-                    "impact": 0,
-                    "confidence": 50,
-                    "summary": "Bu haber için ek AI yorumu üretilemedi; nötr kabul edildi.",
+                    "headline": headline,
+                    **local_result,
                 }
             )
 
@@ -499,6 +631,7 @@ def get_ai_diagnostic() -> dict[str, str]:
             "OLLAMA_URL",
             "http://localhost:11434/api/generate",
         ),
+        "ollama_num_predict": str(_get_int_secret_value("OLLAMA_NUM_PREDICT", 1200)),
         "openai_model": _get_secret_value("OPENAI_MODEL", "gpt-4o-mini"),
         "groq_model": _get_secret_value("GROQ_MODEL", "llama-3.1-8b-instant"),
         "has_openai_key": "yes" if bool(_get_secret_value("OPENAI_API_KEY", "")) else "no",

@@ -226,9 +226,7 @@ def _render_ai_analysis_result(
 ) -> None:
     """Toplu AI analizinden gelen tek haber sonucunu gösterir."""
     if not analysis_item:
-        st.markdown(
-            "**AI Analiz Sonucu:** Haber için ek AI yorumu üretilemedi."
-        )
+        st.warning("AI haber yorumu bu haber için üretilemedi.")
         return
 
     direction = str(analysis_item.get("direction", "NÖTR"))
@@ -315,6 +313,8 @@ def render_news_panel(
 
     if not news_items:
         st.info("Kritik haber akışı bulunamadı.")
+        if ai_bundle is not None:
+            _render_ai_bundle_overview(ai_bundle)
         return
 
     if ai_bundle is None:

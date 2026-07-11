@@ -794,10 +794,10 @@ def _render_ai_summary(
     st.markdown(
         f"""
         <div class="fp-status">
-            <strong>AI analiz sentezi:</strong> {ai_summary}
+            <strong>AI analiz yorumu:</strong> {ai_summary}
             <br/>
             <span class="fp-mini-note">
-                Bu bölüm teknik model çıktısını ve haber etkisini daha anlaşılır
+                Bu görünür AI bölümü teknik model çıktısını ve haber etkisini daha anlaşılır
                 bir özet haline getirir. Yatırım tavsiyesi değildir.
             </span>
         </div>

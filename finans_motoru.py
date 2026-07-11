@@ -400,6 +400,168 @@ def _build_calibrated_scenario_bands(
     )
 
 
+
+def _normalize_model_key(model_name):
+    """Model adlarını eşleştirmek için sade anahtar üretir."""
+    return (
+        str(model_name)
+        .replace("_", " ")
+        .replace("-", " ")
+        .strip()
+        .lower()
+    )
+
+
+def _safe_numeric(value, default=0.0):
+    """Sayısal değeri güvenli şekilde float'a çevirir."""
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return default
+    return float(numeric)
+
+
+def _ensure_diversified_consensus_weights(
+    model_weights,
+    active_models,
+    backtest_results,
+):
+    """
+    Konsensüsün tek modele kilitlenmesini engeller.
+
+    İlk ağırlık sistemi hâlâ ana karar vericidir. Ancak yalnızca tek model
+    ağırlık alırsa, çalışan diğer modeller geçmiş hata, yön doğruluğu ve
+    stabilite skoruna göre sınırlı katkı alır. Böylece grafik tek modelin
+    çizgisine dönüşmez; çoklu model görünümü korunur.
+    """
+    active = [str(model_name) for model_name in active_models]
+    if not active:
+        return {}
+
+    cleaned = {}
+    for model_name in active:
+        try:
+            cleaned[model_name] = max(float(model_weights.get(model_name, 0.0)), 0.0)
+        except (TypeError, ValueError):
+            cleaned[model_name] = 0.0
+
+    positive_models = [
+        model_name
+        for model_name, weight in cleaned.items()
+        if weight > 0
+    ]
+
+    total_current = sum(cleaned.values())
+    if len(positive_models) >= 2 and total_current > 0:
+        return {
+            model_name: weight / total_current
+            for model_name, weight in cleaned.items()
+        }
+
+    row_lookup = {}
+    rmse_values = []
+
+    if isinstance(backtest_results, pd.DataFrame) and not backtest_results.empty:
+        for _, row in backtest_results.iterrows():
+            model_name = str(row.get("Model", ""))
+            if _normalize_model_key(model_name) == "naive last price":
+                continue
+
+            key = _normalize_model_key(model_name)
+            row_lookup[key] = row
+
+            rmse = _safe_numeric(row.get("RMSE"), default=0.0)
+            status = str(row.get("Durum", "")).lower()
+            if rmse > 0 and (not status or status == "başarılı"):
+                rmse_values.append(rmse)
+
+    best_rmse = min(rmse_values) if rmse_values else None
+
+    candidate_scores = {}
+    for model_name in active:
+        key = _normalize_model_key(model_name)
+        row = row_lookup.get(key)
+
+        if row is None:
+            candidate_scores[model_name] = 0.05
+            continue
+
+        status = str(row.get("Durum", "")).lower()
+        if status and status != "başarılı":
+            candidate_scores[model_name] = 0.01
+            continue
+
+        rmse = _safe_numeric(row.get("RMSE"), default=0.0)
+        direction = _safe_numeric(row.get("Yön Doğruluğu %"), default=50.0)
+        stability = _safe_numeric(row.get("Stabilite Skoru"), default=50.0)
+        improvement = _safe_numeric(row.get("RMSE İyileşme %"), default=0.0)
+        passed = str(row.get("Referansı Geçti", "")).lower() == "evet"
+
+        rmse_score = 0.20
+        if best_rmse and rmse > 0:
+            rmse_score = min(best_rmse / rmse, 1.0)
+
+        direction_score = max(0.0, min(direction / 100.0, 1.0))
+        stability_score = max(0.0, min(stability / 100.0, 1.0))
+        improvement_score = max(0.0, min((improvement + 100.0) / 200.0, 1.0))
+        pass_bonus = 1.0 if passed else 0.55
+
+        candidate_scores[model_name] = max(
+            0.01,
+            rmse_score * 0.35
+            + direction_score * 0.25
+            + stability_score * 0.25
+            + improvement_score * 0.10
+            + pass_bonus * 0.05,
+        )
+
+    if not candidate_scores:
+        equal_weight = 1.0 / len(active)
+        return {model_name: equal_weight for model_name in active}
+
+    if len(positive_models) == 1 and len(active) > 1:
+        winner = positive_models[0]
+        other_models = [
+            model_name
+            for model_name in active
+            if model_name != winner
+        ]
+
+        diversified = {model_name: 0.0 for model_name in active}
+        other_score_total = sum(
+            candidate_scores.get(model_name, 0.0)
+            for model_name in other_models
+        )
+
+        remaining_share = 0.50
+        if other_score_total > 0:
+            for model_name in other_models:
+                raw_share = (
+                    remaining_share
+                    * candidate_scores.get(model_name, 0.0)
+                    / other_score_total
+                )
+                diversified[model_name] = min(raw_share, 0.16)
+
+        diversified[winner] = max(0.0, 1.0 - sum(diversified.values()))
+
+        total = sum(diversified.values())
+        if total > 0:
+            return {
+                model_name: weight / total
+                for model_name, weight in diversified.items()
+            }
+
+    score_total = sum(candidate_scores.values())
+    if score_total <= 0:
+        equal_weight = 1.0 / len(active)
+        return {model_name: equal_weight for model_name in active}
+
+    return {
+        model_name: candidate_scores.get(model_name, 0.0) / score_total
+        for model_name in active
+    }
+
+
 def destek_direnc_bul(df, window=20):
     destek = df['Low'].rolling(window=window).min().iloc[-1]
     direnc = df['High'].rolling(window=window).max().iloc[-1]
@@ -729,6 +891,11 @@ def gelecek_senaryolari_hesapla(
     model_agirliklari = calculate_dynamic_model_weights(
         backtest_results=backtest_df,
         active_models=rotalar.keys(),
+    )
+    model_agirliklari = _ensure_diversified_consensus_weights(
+        model_weights=model_agirliklari,
+        active_models=rotalar.keys(),
+        backtest_results=backtest_df,
     )
 
     base_path = np.zeros(periyot_gun, dtype=float)
