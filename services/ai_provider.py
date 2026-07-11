@@ -22,6 +22,7 @@ import streamlit as st
 
 
 DEFAULT_TIMEOUT = 90.0
+LAST_AI_ERROR = ""
 
 
 def _get_secret_value(key: str, default: str = "") -> str:
@@ -57,6 +58,11 @@ def get_ai_provider_name() -> str:
     return "ollama"
 
 
+def get_last_ai_error() -> str:
+    """Son AI hatasını güvenli şekilde döndürür."""
+    return LAST_AI_ERROR
+
+
 def _call_ollama(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
     """Lokal Ollama API çağrısı yapar."""
     model = _get_secret_value("OLLAMA_MODEL", "")
@@ -74,7 +80,7 @@ def _call_ollama(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
         "stream": False,
         "options": {
             "temperature": 0.1,
-            "num_predict": 700,
+            "num_predict": 450,
         },
     }
 
@@ -92,8 +98,14 @@ def _call_openai(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
 
     Harici openai paketi gerektirmez; requests ile çalışır.
     """
+    global LAST_AI_ERROR
+    LAST_AI_ERROR = ""
+
     api_key = _get_secret_value("OPENAI_API_KEY", "")
     if not api_key:
+        LAST_AI_ERROR = "OPENAI_API_KEY bulunamadı. Streamlit Secrets kontrol edilmeli."
+        st.error("OpenAI API key bulunamadı.")
+        st.caption("Streamlit Cloud → Manage app → Settings → Secrets bölümünü kontrol et.")
         return None
 
     model = _get_secret_value("OPENAI_MODEL", "gpt-4o-mini")
@@ -133,18 +145,36 @@ def _call_openai(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
             json=payload,
             timeout=timeout,
         )
-        response.raise_for_status()
+
+        if response.status_code != 200:
+            LAST_AI_ERROR = (
+                f"OpenAI HTTP {response.status_code}: "
+                f"{response.text[:1000]}"
+            )
+            st.error(f"OpenAI hata kodu: {response.status_code}")
+            st.code(response.text[:1000])
+            return None
+
         data = response.json()
-        return (
+        content = (
             data.get("choices", [{}])[0]
             .get("message", {})
             .get("content", "")
             .strip()
-            or None
         )
-    except Exception:
-        return None
 
+        if not content:
+            LAST_AI_ERROR = "OpenAI yanıtı boş geldi."
+            st.error("OpenAI yanıtı boş geldi.")
+            return None
+
+        return content
+
+    except Exception as exc:
+        LAST_AI_ERROR = f"OpenAI bağlantı hatası: {type(exc).__name__}: {exc}"
+        st.error("OpenAI bağlantı hatası")
+        st.code(str(exc))
+        return None
 
 def ai_text_call(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
     """Aktif sağlayıcıya göre tek metin çağrısı yapar."""
@@ -235,6 +265,7 @@ def build_fallback_ai_bundle(
         ),
         "news_analysis": news_analysis,
         "provider": "fallback",
+        "provider_error": get_last_ai_error(),
     }
 
 
@@ -251,7 +282,7 @@ def ai_single_prompt_analysis(
 
     Böylece 6 haber için 6 ayrı istek yerine tek istek gönderilir.
     """
-    news_items = list(news_items or [])[:6]
+    news_items = list(news_items or [])[:3]
     news_lines = []
 
     for index, item in enumerate(news_items, start=1):
@@ -304,6 +335,14 @@ JSON şeması:
     parsed = _extract_json_object(raw_response)
 
     if not parsed:
+        global LAST_AI_ERROR
+        if raw_response and not LAST_AI_ERROR:
+            LAST_AI_ERROR = (
+                "AI yanıtı geldi ama JSON formatına çevrilemedi. "
+                f"İlk karakterler: {raw_response[:300]}"
+            )
+            st.warning(LAST_AI_ERROR)
+
         return build_fallback_ai_bundle(
             asset_name=asset_name,
             current_price=current_price,
@@ -339,5 +378,6 @@ def get_ai_diagnostic() -> dict[str, str]:
         ),
         "openai_model": _get_secret_value("OPENAI_MODEL", "gpt-4o-mini"),
         "has_openai_key": "yes" if bool(_get_secret_value("OPENAI_API_KEY", "")) else "no",
+        "last_error": get_last_ai_error(),
     }
     return diagnostic
