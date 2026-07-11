@@ -7,7 +7,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 import streamlit as st
 from components.ui_theme import inject_global_premium_theme
-from components.header import render_market_ticker
+from components.header import render_app_intro, render_market_ticker
 from components.input_panel import render_input_panel
 from components.sidebar import render_sidebar_header
 from core.startup import initialize_application
@@ -111,6 +111,89 @@ def render_currency_source_notice(metadata) -> None:
             st.caption(note)
 
 
+
+def render_ai_result_card(ai_bundle) -> None:
+    """AI sonucunu sekmelerden önce görünür bir premium kart olarak gösterir."""
+    if not isinstance(ai_bundle, dict):
+        st.warning("AI yorumu henüz oluşturulamadı.")
+        return
+
+    provider = str(ai_bundle.get("provider", "AI")).upper()
+    technical_summary = str(ai_bundle.get("technical_summary", "")).strip()
+    market_synthesis = str(ai_bundle.get("market_synthesis", "")).strip()
+    risk_note = str(ai_bundle.get("risk_note", "")).strip()
+    news_effect = str(ai_bundle.get("overall_news_effect", "NÖTR")).strip()
+
+    if not technical_summary and not market_synthesis and not risk_note:
+        st.warning("AI çıktı verdi ancak gösterilecek yorum alanı boş geldi.")
+        return
+
+    tone_class = "ai-up" if "POZ" in news_effect.upper() else "ai-down" if "NEG" in news_effect.upper() else "ai-neutral"
+
+    st.markdown(
+        """
+        <style>
+        .fp-ai-result-card {
+            border: 1px solid rgba(56, 189, 248, 0.42);
+            border-radius: 22px;
+            padding: 18px 20px;
+            margin: 12px 0 18px 0;
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.22), transparent 34%),
+                radial-gradient(circle at bottom right, rgba(134, 239, 172, 0.12), transparent 30%),
+                linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.94));
+            box-shadow: 0 18px 44px rgba(2, 6, 23, 0.30);
+        }
+        .fp-ai-result-kicker {
+            color: #93c5fd;
+            font-size: 0.78rem;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            font-weight: 900;
+            margin-bottom: 7px;
+        }
+        .fp-ai-result-title {
+            color: #f8fafc;
+            font-size: 1.28rem;
+            font-weight: 950;
+            margin-bottom: 8px;
+        }
+        .fp-ai-result-text {
+            color: #dbeafe;
+            font-size: 1.00rem;
+            line-height: 1.65;
+            font-weight: 560;
+        }
+        .fp-ai-result-note {
+            color: #cbd5e1;
+            font-size: 0.90rem;
+            margin-top: 8px;
+            line-height: 1.52;
+        }
+        .ai-up { color: #86efac; font-weight: 950; }
+        .ai-down { color: #fca5a5; font-weight: 950; }
+        .ai-neutral { color: #fde68a; font-weight: 950; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+        <div class="fp-ai-result-card">
+            <div class="fp-ai-result-kicker">AI Analysis Visible Layer · {provider}</div>
+            <div class="fp-ai-result-title">
+                AI yorumları hazır · <span class="{tone_class}">{news_effect}</span>
+            </div>
+            <div class="fp-ai-result-text">{technical_summary or market_synthesis}</div>
+            <div class="fp-ai-result-note">{market_synthesis}</div>
+            <div class="fp-ai-result-note">{risk_note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_analysis_tabs(
     data,
     news_items,
@@ -169,9 +252,16 @@ def run_analysis(inputs) -> None:
 
         if data is None or data.empty:
             progress.close()
-            st.warning(
-                "Seçilen varlık için geçerli piyasa verisi bulunamadı."
-            )
+            if getattr(inputs, "market_symbol", "") == "GRAM_ALTIN_TRY":
+                st.warning(
+                    "Gram Altın için geçerli veri üretilemedi. "
+                    "Ons altın veya USD/TRY geçmiş verisi alınamadı. "
+                    "İnternet bağlantısını ve yfinance veri erişimini kontrol et."
+                )
+            else:
+                st.warning(
+                    "Seçilen varlık için geçerli piyasa verisi bulunamadı."
+                )
             return
 
         current_price = float(data["Close"].iloc[-1])
@@ -220,6 +310,8 @@ def run_analysis(inputs) -> None:
         progress.update(80, "Risk metrikleri hesaplanıyor...")
         progress.complete()
 
+        render_ai_result_card(ai_bundle)
+
         render_data_source_notice(market_metadata)
 
         render_analysis_tabs(
@@ -240,12 +332,15 @@ def main() -> None:
     """Streamlit uygulamasının ana çalışma akışı."""
     initialize_application()
     inject_global_premium_theme()
-    render_market_ticker()
     render_sidebar_header()
+
+    render_app_intro()
 
     currency_result = get_cached_currencies_with_metadata()
     currencies = currency_result.get("rates", {})
     currency_metadata = currency_result.get("metadata")
+
+    render_market_ticker(currencies)
 
     inputs = render_input_panel(currencies)
     render_currency_source_notice(currency_metadata)
