@@ -5,7 +5,7 @@ Bu bileşen risk metriklerini, RSI uyarısını,
 fiyat grafiğini ve AI teknik analiz özetini gösterir.
 """
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 import pandas as pd
 import streamlit as st
@@ -505,10 +505,68 @@ def _render_executive_market_pulse(
 
 
 
+def _get_ai_bundle_text(ai_bundle: Optional[Mapping[str, Any]], key: str) -> str:
+    """AI bundle içinden güvenli metin okur."""
+    if not isinstance(ai_bundle, Mapping):
+        return ""
+
+    value = ai_bundle.get(key, "")
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def _news_effect_tone(effect: str) -> str:
+    """Haber etkisine göre güvenli CSS sınıfı döndürür."""
+    upper_effect = str(effect).upper()
+
+    if "POZ" in upper_effect:
+        return "fp-exec-positive"
+    if "NEG" in upper_effect:
+        return "fp-exec-negative"
+    return "fp-exec-neutral"
+
+
+def _render_news_effect_summary(ai_bundle: Optional[Mapping[str, Any]]) -> None:
+    """Haber etkisini genel analiz içine ekler."""
+    if not isinstance(ai_bundle, Mapping):
+        return
+
+    effect = _get_ai_bundle_text(ai_bundle, "overall_news_effect") or "NÖTR"
+    summary = _get_ai_bundle_text(ai_bundle, "news_effect_summary")
+    synthesis = _get_ai_bundle_text(ai_bundle, "market_synthesis")
+
+    if not summary and not synthesis:
+        return
+
+    tone = _news_effect_tone(effect)
+
+    st.markdown(
+        f"""
+        <div class="fp-status">
+            <strong>Haber Etkisi:</strong>
+            <span class="{tone}">{effect}</span>
+            <br/>
+            <span>{summary or synthesis}</span>
+            <br/>
+            <span class="fp-mini-note">
+                Haber etkisi, fiyat tahmini yerine haber başlıklarının genel
+                senaryo okumasına katkısını gösterir. Yatırım tavsiyesi değildir.
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
 def _render_professional_summary(
     current_price: float,
     currency_rate: float,
     forecast_data: Mapping[str, Any],
+    ai_bundle: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """Analiz sonucunu premium terminal tarzı bir özetle gösterir."""
     summary_row = _get_primary_horizon_row(forecast_data)
@@ -660,6 +718,8 @@ def _render_professional_summary(
         unsafe_allow_html=True,
     )
 
+    _render_news_effect_summary(ai_bundle)
+
 
 def _render_rsi_status(close_prices: pd.Series) -> None:
     """RSI sonucunu uygun Streamlit mesaj kutusunda gösterir."""
@@ -685,23 +745,37 @@ def _render_ai_summary(
     current_price: float,
     bull_target: float,
     bear_target: float,
+    ai_bundle: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """AI teknik analiz özetini güvenli şekilde gösterir."""
-    try:
-        ai_summary = ai_teknik_analiz_yorumu(
-            asset_name,
-            current_price,
-            bull_target,
-            bear_target,
-        )
-    except Exception as exc:
-        st.warning(
-            "AI teknik analiz özeti oluşturulamadı. "
-            f"Detay: {exc}"
-        )
-        return
+    bundled_summary = _get_ai_bundle_text(ai_bundle, "technical_summary")
+    bundled_synthesis = _get_ai_bundle_text(ai_bundle, "market_synthesis")
+    bundled_risk_note = _get_ai_bundle_text(ai_bundle, "risk_note")
+
+    if bundled_summary:
+        ai_summary = bundled_summary
+    else:
+        try:
+            ai_summary = ai_teknik_analiz_yorumu(
+                asset_name,
+                current_price,
+                bull_target,
+                bear_target,
+            )
+        except Exception as exc:
+            st.warning(
+                "AI teknik analiz özeti oluşturulamadı. "
+                f"Detay: {exc}"
+            )
+            return
 
     st.info(f"**Analiz Sentezi:** {ai_summary}")
+
+    if bundled_synthesis:
+        st.caption(f"Piyasa sentezi: {bundled_synthesis}")
+
+    if bundled_risk_note:
+        st.caption(bundled_risk_note)
 
 
 def render_analysis_panel(
@@ -710,6 +784,7 @@ def render_analysis_panel(
     current_price: float,
     currency_rate: float,
     forecast_data: Mapping[str, Any],
+    ai_bundle: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Ana analiz sekmesinin tamamını oluşturur.
@@ -737,6 +812,7 @@ def render_analysis_panel(
         current_price=current_price,
         currency_rate=currency_rate,
         forecast_data=forecast_data,
+        ai_bundle=ai_bundle,
     )
 
     st.markdown("---")
@@ -779,4 +855,5 @@ def render_analysis_panel(
         current_price=current_price,
         bull_target=float(forecast_data["boga"]),
         bear_target=float(forecast_data["ayi"]),
+        ai_bundle=ai_bundle,
     )

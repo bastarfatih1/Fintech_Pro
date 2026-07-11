@@ -10,7 +10,7 @@ from typing import Any, Optional, Tuple
 
 import streamlit as st
 
-from haber_motoru import ai_etki_analizi
+from haber_motoru import ai_haberleri_toplu_analiz_et
 from components.ui_icons import icon_html
 
 
@@ -201,32 +201,25 @@ def _render_news_card(news_item: Mapping[str, Any]) -> None:
     )
 
 
-def _render_ai_analysis(
-    headline: str,
-    asset_name: str,
+def _render_ai_analysis_result(
+    analysis_item: Optional[Mapping[str, Any]],
 ) -> None:
-    """Bir haber başlığı için AI etki analizini gösterir."""
-    try:
-        analysis_result = ai_etki_analizi(
-            headline,
-            asset_name,
-        )
-    except Exception as exc:
-        st.warning(
-            "AI haber analizi şu anda tamamlanamadı. "
-            f"Detay: {exc}"
-        )
-        return
-
-    parsed_result = _parse_ai_analysis(analysis_result)
-
-    if parsed_result is None:
+    """Toplu AI analizinden gelen tek haber sonucunu gösterir."""
+    if not analysis_item:
         st.markdown(
-            f"**AI Analiz Sonucu:** {_escape_html(analysis_result)}"
+            "**AI Analiz Sonucu:** Haber için ek AI yorumu üretilemedi."
         )
         return
 
-    direction, impact, confidence, summary = parsed_result
+    direction = str(analysis_item.get("direction", "NÖTR"))
+    impact = str(analysis_item.get("impact", 0))
+    confidence = str(analysis_item.get("confidence", 50))
+    summary = str(
+        analysis_item.get(
+            "summary",
+            "Haber etkisi nötr kabul edildi.",
+        )
+    )
     color = _get_direction_color(direction)
 
     st.markdown(
@@ -246,6 +239,7 @@ def _render_ai_analysis(
 def render_news_panel(
     news_items: Optional[Iterable[Mapping[str, Any]]],
     asset_name: str,
+    ai_bundle: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Haber sekmesinin tamamını oluşturur.
@@ -263,20 +257,34 @@ def render_news_panel(
         st.info("Kritik haber akışı bulunamadı.")
         return
 
-    for news_item in news_items:
+    if ai_bundle is None:
+        ai_bundle = ai_haberleri_toplu_analiz_et(
+            varlik=asset_name,
+            haberler=news_items,
+        )
+
+    ai_results = ai_bundle.get("news_analysis", [])
+
+    if ai_bundle.get("market_synthesis"):
+        st.info(f"**Piyasa Sentezi:** {ai_bundle.get('market_synthesis')}")
+
+    if ai_bundle.get("news_effect_summary"):
+        st.caption(
+            f"Haber etkisi: {ai_bundle.get('overall_news_effect', 'NÖTR')} · "
+            f"{ai_bundle.get('news_effect_summary')}"
+        )
+
+    for index, news_item in enumerate(news_items):
         with st.container():
             _render_news_card(news_item)
 
-            headline = str(
-                news_item.get(
-                    "title",
-                    "Başlıksız Haber",
-                )
+            analysis_item = (
+                ai_results[index]
+                if index < len(ai_results)
+                and isinstance(ai_results[index], Mapping)
+                else None
             )
 
-            _render_ai_analysis(
-                headline=headline,
-                asset_name=asset_name,
-            )
+            _render_ai_analysis_result(analysis_item)
 
             st.divider()

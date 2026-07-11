@@ -28,6 +28,7 @@ from services.cache_service import (
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
 )
+from haber_motoru import ai_haberleri_toplu_analiz_et
 
 
 def render_data_source_notice(metadata) -> None:
@@ -116,6 +117,7 @@ def render_analysis_tabs(
     inputs,
     current_price,
     forecast_data,
+    ai_bundle=None,
 ) -> None:
     """Analiz sonuçlarını dört ana sekmede gösterir."""
     tabs = create_main_tabs()
@@ -127,6 +129,7 @@ def render_analysis_tabs(
             current_price=current_price,
             currency_rate=inputs.currency_rate,
             forecast_data=forecast_data,
+            ai_bundle=ai_bundle,
         )
 
     with tabs[1]:
@@ -139,6 +142,7 @@ def render_analysis_tabs(
         render_news_panel(
             news_items=news_items,
             asset_name=inputs.asset_name,
+            ai_bundle=ai_bundle,
         )
 
     with tabs[3]:
@@ -196,6 +200,16 @@ def run_analysis(inputs) -> None:
             market_symbol=inputs.market_symbol,
         )
 
+        progress.update(72, "Tek prompt AI sentezi hazırlanıyor...")
+
+        ai_bundle = ai_haberleri_toplu_analiz_et(
+            varlik=inputs.asset_name,
+            haberler=news_items,
+            anlik=current_price,
+            boga=float(forecast_data["boga"]),
+            ayi=float(forecast_data["ayi"]),
+        )
+
         progress.update(80, "Risk metrikleri hesaplanıyor...")
         progress.complete()
 
@@ -207,6 +221,7 @@ def run_analysis(inputs) -> None:
             inputs=inputs,
             current_price=current_price,
             forecast_data=forecast_data,
+            ai_bundle=ai_bundle,
         )
 
     except Exception as exc:
