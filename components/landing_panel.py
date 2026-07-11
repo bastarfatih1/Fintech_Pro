@@ -74,44 +74,57 @@ def _extract_future_table(
     forecast_data: Mapping[str, Any],
     currency_symbol: str,
 ) -> pd.DataFrame:
-    """Gelecek senaryolarını ilk ekran için okunur tabloya çevirir."""
+    """
+    Gelecek senaryolarını okunur tabloya çevirir.
+
+    Eski tabloda sadece "Sermaye Karşılığı" yazdığı için bunun hangi
+    senaryoya ait olduğu belirsizdi. Bu tabloda artık üç ayrı sermaye
+    karşılığı net gösterilir:
+    - Kötümser Sermaye
+    - Baz Sermaye
+    - İyimser Sermaye
+    """
     future_table = forecast_data.get("gelecek_df")
 
     if not isinstance(future_table, pd.DataFrame) or future_table.empty:
         return pd.DataFrame()
 
-    columns = [
-        column
-        for column in (
-            "Vade",
-            "Kötümser Senaryo",
-            "Baz Senaryo",
-            "İyimser Senaryo",
-            "Kötümser Getiri %",
-            "Nominal Getiri %",
-            "İyimser Getiri %",
-            "Sermaye Karşılığı",
-        )
-        if column in future_table.columns
-    ]
+    renamed = pd.DataFrame()
+    renamed["Vade"] = future_table.get("Vade", "")
 
-    formatted = future_table[columns].copy()
+    column_map = {
+        "Kötümser Senaryo": "Kötümser Fiyat",
+        "Baz Senaryo": "Baz Fiyat",
+        "İyimser Senaryo": "İyimser Fiyat",
+        "Kötümser Getiri %": "Kötümser Getiri",
+        "Nominal Getiri %": "Baz Getiri",
+        "İyimser Getiri %": "İyimser Getiri",
+        "Kötümser Sermaye": "Kötümser Sermaye",
+        "Sermaye Karşılığı": "Baz Sermaye",
+        "İyimser Sermaye": "İyimser Sermaye",
+    }
+
+    for source_column, display_column in column_map.items():
+        if source_column in future_table.columns:
+            renamed[display_column] = future_table[source_column]
 
     money_columns = (
-        "Kötümser Senaryo",
-        "Baz Senaryo",
-        "İyimser Senaryo",
-        "Sermaye Karşılığı",
+        "Kötümser Fiyat",
+        "Baz Fiyat",
+        "İyimser Fiyat",
+        "Kötümser Sermaye",
+        "Baz Sermaye",
+        "İyimser Sermaye",
     )
     percent_columns = (
-        "Kötümser Getiri %",
-        "Nominal Getiri %",
-        "İyimser Getiri %",
+        "Kötümser Getiri",
+        "Baz Getiri",
+        "İyimser Getiri",
     )
 
     for column in money_columns:
-        if column in formatted.columns:
-            formatted[column] = formatted[column].apply(
+        if column in renamed.columns:
+            renamed[column] = renamed[column].apply(
                 lambda value: _format_money(
                     _safe_float(value),
                     currency_symbol,
@@ -119,12 +132,12 @@ def _extract_future_table(
             )
 
     for column in percent_columns:
-        if column in formatted.columns:
-            formatted[column] = formatted[column].apply(
+        if column in renamed.columns:
+            renamed[column] = renamed[column].apply(
                 lambda value: _format_percent(_safe_float(value))
             )
 
-    return formatted
+    return renamed
 
 
 def _build_past_return_table(
@@ -383,9 +396,9 @@ def render_landing_panel(
                 <div class="fp-landing-note">Beklenen fark: {_format_percent(expected_return)}</div>
             </div>
             <div class="fp-landing-card">
-                <div class="fp-landing-label">Tutar Girilirse Tahmini Sermaye</div>
+                <div class="fp-landing-label">Baz Senaryoya Göre Sermaye</div>
                 <div class="fp-landing-value">{capital_text}</div>
-                <div class="fp-landing-note">Baz senaryoya göre olası kazanç/kayıp: {gain_text}</div>
+                <div class="fp-landing-note">Seçili yatırım tutarına göre baz senaryo kazanç/kayıp: {gain_text}</div>
             </div>
         </div>
         """,
@@ -416,6 +429,10 @@ def render_landing_panel(
     future_table = _extract_future_table(forecast_data, currency_symbol)
 
     st.markdown("<div class='fp-section-title'>Gelecek senaryo özeti</div>", unsafe_allow_html=True)
+    st.caption(
+        "Fiyat sütunları varlığın beklenen fiyatını gösterir. Sermaye sütunları ise "
+        "girdiğin yatırım tutarının o senaryoda yaklaşık kaç TL/para birimi olacağını gösterir."
+    )
     if future_table.empty:
         st.info("Gelecek senaryo tablosu bulunamadı.")
     else:
