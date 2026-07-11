@@ -3,7 +3,7 @@ AI sağlayıcı katmanı.
 
 Amaç:
 - Lokal geliştirmede Ollama kullanmak
-- Yayın / Streamlit Cloud ortamında OpenAI uyumlu API kullanmak
+- Yayın / Streamlit Cloud ortamında Groq veya OpenAI uyumlu API kullanmak
 - AI erişilemezse uygulamayı bozmadan güvenli fallback üretmek
 
 Not:
@@ -44,13 +44,17 @@ def get_ai_provider_name() -> str:
 
     Öncelik:
     1. AI_PROVIDER secret/env
-    2. OPENAI_API_KEY varsa openai
-    3. Yoksa ollama
+    2. GROQ_API_KEY varsa groq
+    3. OPENAI_API_KEY varsa openai
+    4. Yoksa ollama
     """
     configured = _get_secret_value("AI_PROVIDER", "").strip().lower()
 
     if configured:
         return configured
+
+    if _get_secret_value("GROQ_API_KEY", ""):
+        return "groq"
 
     if _get_secret_value("OPENAI_API_KEY", ""):
         return "openai"
@@ -176,9 +180,98 @@ def _call_openai(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
         st.code(str(exc))
         return None
 
+
+def _call_groq(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
+    """
+    Groq OpenAI uyumlu Chat Completions API çağrısı yapar.
+
+    Harici groq paketi gerektirmez; requests ile çalışır.
+    """
+    global LAST_AI_ERROR
+    LAST_AI_ERROR = ""
+
+    api_key = _get_secret_value("GROQ_API_KEY", "")
+    if not api_key:
+        LAST_AI_ERROR = "GROQ_API_KEY bulunamadı. Streamlit Secrets kontrol edilmeli."
+        st.error("Groq API key bulunamadı.")
+        st.caption("Streamlit Cloud → Manage app → Settings → Secrets bölümünü kontrol et.")
+        return None
+
+    model = _get_secret_value("GROQ_MODEL", "llama-3.1-8b-instant")
+    base_url = _get_secret_value(
+        "GROQ_BASE_URL",
+        "https://api.groq.com/openai/v1",
+    ).rstrip("/")
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Sen finansal veri analizi arayüzü için kısa, dikkatli "
+                    "ve yatırım tavsiyesi vermeyen Türkçe açıklamalar üreten "
+                    "bir analiz asistanısın. Al, sat, tut gibi yönlendirme "
+                    "ifadeleri kullanma. Sadece geçerli JSON döndür."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0.1,
+        "max_tokens": 700,
+    }
+
+    try:
+        response = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+
+        if response.status_code != 200:
+            LAST_AI_ERROR = (
+                f"Groq HTTP {response.status_code}: "
+                f"{response.text[:1000]}"
+            )
+            st.error(f"Groq hata kodu: {response.status_code}")
+            st.code(response.text[:1000])
+            return None
+
+        data = response.json()
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+
+        if not content:
+            LAST_AI_ERROR = "Groq yanıtı boş geldi."
+            st.error("Groq yanıtı boş geldi.")
+            return None
+
+        return content
+
+    except Exception as exc:
+        LAST_AI_ERROR = f"Groq bağlantı hatası: {type(exc).__name__}: {exc}"
+        st.error("Groq bağlantı hatası")
+        st.code(str(exc))
+        return None
+
 def ai_text_call(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
     """Aktif sağlayıcıya göre tek metin çağrısı yapar."""
+    global LAST_AI_ERROR
     provider = get_ai_provider_name()
+
+    if provider == "groq":
+        return _call_groq(prompt, timeout=timeout)
 
     if provider == "openai":
         return _call_openai(prompt, timeout=timeout)
@@ -186,6 +279,8 @@ def ai_text_call(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
     if provider == "ollama":
         return _call_ollama(prompt, timeout=timeout)
 
+    LAST_AI_ERROR = f"Bilinmeyen AI_PROVIDER: {provider}"
+    st.error(LAST_AI_ERROR)
     return None
 
 
@@ -377,7 +472,9 @@ def get_ai_diagnostic() -> dict[str, str]:
             "http://localhost:11434/api/generate",
         ),
         "openai_model": _get_secret_value("OPENAI_MODEL", "gpt-4o-mini"),
+        "groq_model": _get_secret_value("GROQ_MODEL", "llama-3.1-8b-instant"),
         "has_openai_key": "yes" if bool(_get_secret_value("OPENAI_API_KEY", "")) else "no",
+        "has_groq_key": "yes" if bool(_get_secret_value("GROQ_API_KEY", "")) else "no",
         "last_error": get_last_ai_error(),
     }
     return diagnostic
