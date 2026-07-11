@@ -5,4 +5,4 @@ numpy
 yfinance
 scikit-learn==1.3.2
 xgboost==1.7.6
-statsmodels
+statsmodelsplotly
