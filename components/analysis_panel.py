@@ -15,6 +15,12 @@ from charts.rsi import analyze_rsi
 from components.metrics import render_risk_metrics
 from components.ui_icons import icon_html
 from haber_motoru import ai_teknik_analiz_yorumu
+from components.education_layer import (
+    build_plain_market_summary,
+    render_chart_explanation,
+    render_plain_explainer,
+    render_term_grid,
+)
 
 
 
@@ -629,6 +635,22 @@ def _render_professional_summary(
         general_status=general_status,
     )
 
+    render_plain_explainer(
+        title="Bu ekran neyi anlatıyor?",
+        simple=build_plain_market_summary(
+            signal_label=signal_label,
+            risk_level=risk_level,
+            confidence=confidence,
+            nominal_return=nominal_return,
+            band_width=band_width,
+        ),
+        why=(
+            "Bu bölüm fiyatı, riski, model güvenini "
+            "ve senaryo aralığını aynı yerde sade biçimde okur."
+        ),
+        watch="Bu özet yatırım tavsiyesi değildir; yalnızca veriyi anlaşılır hale getirir.",
+    )
+
     st.markdown(
         f"""
         <div class="fp-hero">
@@ -769,10 +791,29 @@ def _render_ai_summary(
             )
             return
 
-    st.info(f"**Analiz Sentezi:** {ai_summary}")
+    st.markdown(
+        f"""
+        <div class="fp-status">
+            <strong>AI analiz sentezi:</strong> {ai_summary}
+            <br/>
+            <span class="fp-mini-note">
+                Bu bölüm teknik model çıktısını ve haber etkisini daha anlaşılır
+                bir özet haline getirir. Yatırım tavsiyesi değildir.
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if bundled_synthesis:
-        st.caption(f"Piyasa sentezi: {bundled_synthesis}")
+        st.markdown(
+            f"""
+            <div class="fp-status">
+                <strong>Piyasa sentezi:</strong> {bundled_synthesis}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     if bundled_risk_note:
         st.caption(bundled_risk_note)
@@ -815,6 +856,14 @@ def render_analysis_panel(
         ai_bundle=ai_bundle,
     )
 
+    _render_ai_summary(
+        asset_name=asset_name,
+        current_price=current_price,
+        bull_target=float(forecast_data["boga"]),
+        bear_target=float(forecast_data["ayi"]),
+        ai_bundle=ai_bundle,
+    )
+
     st.markdown("---")
 
     render_risk_metrics(forecast_data["stats"])
@@ -850,10 +899,3 @@ def render_analysis_panel(
             },
         )
 
-    _render_ai_summary(
-        asset_name=asset_name,
-        current_price=current_price,
-        bull_target=float(forecast_data["boga"]),
-        bear_target=float(forecast_data["ayi"]),
-        ai_bundle=ai_bundle,
-    )

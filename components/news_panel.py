@@ -12,6 +12,7 @@ import streamlit as st
 
 from haber_motoru import ai_haberleri_toplu_analiz_et
 from components.ui_icons import icon_html
+from components.education_layer import render_table_explanation, render_term_grid
 
 
 def _inject_news_premium_style() -> None:
@@ -73,11 +74,30 @@ def _inject_news_premium_style() -> None:
                 linear-gradient(180deg, rgba(255,255,255,0.050), rgba(255,255,255,0.020));
         }
         .fp-ai-note {
-            border-left: 4px solid rgba(56, 189, 248, 0.90);
-            border-radius: 14px;
-            padding: 10px 12px;
-            background: rgba(14, 165, 233, 0.08);
-            margin: 8px 0 14px 0;
+            border-left: 4px solid rgba(56, 189, 248, 0.95);
+            border-radius: 16px;
+            padding: 14px 15px;
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 34%),
+                linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(15, 23, 42, 0.60));
+            margin: 10px 0 16px 0;
+            color: #e2e8f0;
+            font-size: 0.96rem;
+            line-height: 1.58;
+        }
+        .fp-ai-note-title {
+            color: #bae6fd;
+            font-weight: 900;
+            margin-bottom: 6px;
+        }
+        .fp-ai-note-meta {
+            color: #dbeafe;
+            font-size: 0.90rem;
+            margin-bottom: 6px;
+        }
+        .fp-ai-note-summary {
+            color: #d1d5db;
+            font-size: 0.94rem;
         }
         </style>
         """,
@@ -225,12 +245,52 @@ def _render_ai_analysis_result(
     st.markdown(
         (
             "<div class='fp-ai-note'>"
-            f"**Yön:** <span style='color:{color};'>"
-            f"{_escape_html(direction)}</span> | "
-            f"**Etki:** %{_escape_html(impact)} | "
-            f"**AI Güven Skoru:** {_escape_html(confidence)}/100"
-            f"<br>*Özet:* {_escape_html(summary)}"
+            "<div class='fp-ai-note-title'>AI haber yorumu</div>"
+            "<div class='fp-ai-note-meta'>"
+            f"<strong>Yön:</strong> <span style='color:{color}; font-weight:900;'>"
+            f"{_escape_html(direction)}</span> · "
+            f"<strong>Etki:</strong> %{_escape_html(impact)} · "
+            f"<strong>AI güven skoru:</strong> {_escape_html(confidence)}/100"
             "</div>"
+            f"<div class='fp-ai-note-summary'>{_escape_html(summary)}</div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+
+def _render_ai_bundle_overview(ai_bundle: Optional[Mapping[str, Any]]) -> None:
+    """Haber sekmesinde AI çıktısının üst özetini daha görünür gösterir."""
+    if not isinstance(ai_bundle, Mapping):
+        st.info("AI haber özeti henüz oluşturulmadı.")
+        return
+
+    provider = str(ai_bundle.get("provider", "AI")).upper()
+    effect = str(ai_bundle.get("overall_news_effect", "NÖTR"))
+    synthesis = str(ai_bundle.get("market_synthesis", "")).strip()
+    summary = str(ai_bundle.get("news_effect_summary", "")).strip()
+
+    if not synthesis and not summary:
+        return
+
+    color = _get_direction_color(effect)
+
+    st.markdown(
+        (
+            "<div class='fp-ai-note'>"
+            f"<div class='fp-ai-note-title'>AI piyasa sentezi · {provider}</div>"
+            "<div class='fp-ai-note-meta'>"
+            f"<strong>Genel haber etkisi:</strong> "
+            f"<span style='color:{color}; font-weight:900;'>{_escape_html(effect)}</span>"
+            "</div>"
+            f"<div class='fp-ai-note-summary'>{_escape_html(synthesis or summary)}</div>"
+            + (
+                f"<div class='fp-ai-note-summary' style='margin-top:8px;'>{_escape_html(summary)}</div>"
+                if synthesis and summary and summary != synthesis
+                else ""
+            )
+            + "</div>"
         ),
         unsafe_allow_html=True,
     )
@@ -265,14 +325,7 @@ def render_news_panel(
 
     ai_results = ai_bundle.get("news_analysis", [])
 
-    if ai_bundle.get("market_synthesis"):
-        st.info(f"**Piyasa Sentezi:** {ai_bundle.get('market_synthesis')}")
-
-    if ai_bundle.get("news_effect_summary"):
-        st.caption(
-            f"Haber etkisi: {ai_bundle.get('overall_news_effect', 'NÖTR')} · "
-            f"{ai_bundle.get('news_effect_summary')}"
-        )
+    _render_ai_bundle_overview(ai_bundle)
 
     for index, news_item in enumerate(news_items):
         with st.container():
@@ -288,3 +341,15 @@ def render_news_panel(
             _render_ai_analysis_result(analysis_item)
 
             st.divider()
+
+    render_table_explanation(
+        table_name="AI haber duyarlılığı",
+        plain_text=(
+            "Bu bölüm haber başlıklarını sade bir duygu okumasına çevirir. "
+            "Pozitif haber, fiyat kesin yükselecek demek değildir; sadece haber dilinin "
+            "seçili varlık için daha olumlu okunabileceğini anlatır. Negatif haber de "
+            "kesin düşüş anlamına gelmez; risk veya baskı ihtimalinin arttığını gösterir. "
+            "Nötr haber ise fiyat üzerinde güçlü bir etki okunmadığını söyler."
+        ),
+        terms=["AI Güven Skoru", "Momentum"],
+    )
