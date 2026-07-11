@@ -251,7 +251,7 @@ def render_news_panel(
     news_items = _render_news_hero(
         news_items=news_items,
         asset_name=asset_name,
-    )
+    )[:6]
 
     if not news_items:
         st.info("Kritik haber akışı bulunamadı.")

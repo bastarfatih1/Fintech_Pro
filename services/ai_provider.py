@@ -84,7 +84,7 @@ def _call_ollama(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
         "stream": False,
         "options": {
             "temperature": 0.1,
-            "num_predict": 450,
+            "num_predict": 2000,
         },
     }
 
@@ -212,7 +212,10 @@ def _call_groq(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
                     "Sen finansal veri analizi arayüzü için kısa, dikkatli "
                     "ve yatırım tavsiyesi vermeyen Türkçe açıklamalar üreten "
                     "bir analiz asistanısın. Al, sat, tut gibi yönlendirme "
-                    "ifadeleri kullanma. Sadece geçerli JSON döndür."
+                    "ifadeleri kullanma. Sadece ham JSON objesi döndür. "
+                    "JSON dışında açıklama, markdown veya kod bloğu yazma. "
+                    "Cevap doğrudan { karakteri ile başlamalı ve } karakteri ile bitmeli. "
+                    "news_analysis dizisi, verilen haber sayısı kadar öğe içermeli."
                 ),
             },
             {
@@ -222,6 +225,7 @@ def _call_groq(prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str | None:
         ],
         "temperature": 0.1,
         "max_tokens": 700,
+        "response_format": {"type": "json_object"},
     }
 
     try:
@@ -364,7 +368,7 @@ def build_fallback_ai_bundle(
     }
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=1800, show_spinner=False)
 def ai_single_prompt_analysis(
     asset_name: str,
     current_price: float,
@@ -377,7 +381,7 @@ def ai_single_prompt_analysis(
 
     Böylece 6 haber için 6 ayrı istek yerine tek istek gönderilir.
     """
-    news_items = list(news_items or [])[:3]
+    news_items = list(news_items or [])[:6]
     news_lines = []
 
     for index, item in enumerate(news_items, start=1):
@@ -405,7 +409,11 @@ Kurallar:
 - Yatırım tavsiyesi verme.
 - Al / sat / tut ifadeleri kullanma.
 - Kesinlik veya garanti dili kullanma.
-- Sadece geçerli JSON döndür.
+- Sadece ham JSON objesi döndür.
+- JSON dışında açıklama, giriş cümlesi, markdown veya kod bloğu yazma.
+- Cevap doğrudan {{ karakteri ile başlamalı ve }} karakteri ile bitmeli.
+- news_analysis dizisinde her haber için tam olarak 1 analiz objesi olmalı.
+- Haber sayısı kadar analiz döndür; eksik haber bırakma.
 
 JSON şeması:
 {{
@@ -436,7 +444,7 @@ JSON şeması:
                 "AI yanıtı geldi ama JSON formatına çevrilemedi. "
                 f"İlk karakterler: {raw_response[:300]}"
             )
-            st.warning(LAST_AI_ERROR)
+            pass
 
         return build_fallback_ai_bundle(
             asset_name=asset_name,
@@ -456,6 +464,26 @@ JSON şeması:
 
     if not isinstance(parsed["news_analysis"], list):
         parsed["news_analysis"] = []
+
+    normalized_analysis = []
+    for index, item in enumerate(news_items):
+        if index < len(parsed["news_analysis"]) and isinstance(
+            parsed["news_analysis"][index],
+            Mapping,
+        ):
+            normalized_analysis.append(dict(parsed["news_analysis"][index]))
+        else:
+            normalized_analysis.append(
+                {
+                    "headline": str(item.get("title", "Başlıksız Haber")),
+                    "direction": "NÖTR",
+                    "impact": 0,
+                    "confidence": 50,
+                    "summary": "Bu haber için ek AI yorumu üretilemedi; nötr kabul edildi.",
+                }
+            )
+
+    parsed["news_analysis"] = normalized_analysis[: len(news_items)]
 
     return parsed
 

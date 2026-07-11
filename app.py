@@ -28,7 +28,7 @@ from services.cache_service import (
 from finans_motoru import (
     gelecek_senaryolari_hesapla,
 )
-from haber_motoru import ai_haberleri_toplu_analiz_et
+from haber_motoru import ai_haberleri_toplu_analiz_et, render_premium_ai_loading
 
 
 def render_data_source_notice(metadata) -> None:
@@ -202,13 +202,20 @@ def run_analysis(inputs) -> None:
 
         progress.update(72, "Tek prompt AI sentezi hazırlanıyor...")
 
-        ai_bundle = ai_haberleri_toplu_analiz_et(
-            varlik=inputs.asset_name,
-            haberler=news_items,
-            anlik=current_price,
-            boga=float(forecast_data["boga"]),
-            ayi=float(forecast_data["ayi"]),
-        )
+        ai_loading_placeholder = st.empty()
+        with ai_loading_placeholder:
+            render_premium_ai_loading()
+
+        try:
+            ai_bundle = ai_haberleri_toplu_analiz_et(
+                varlik=inputs.asset_name,
+                haberler=news_items,
+                anlik=current_price,
+                boga=float(forecast_data["boga"]),
+                ayi=float(forecast_data["ayi"]),
+            )
+        finally:
+            ai_loading_placeholder.empty()
 
         progress.update(80, "Risk metrikleri hesaplanıyor...")
         progress.complete()
