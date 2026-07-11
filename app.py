@@ -15,6 +15,7 @@ from core.session import initialize_analysis_state, render_analysis_button
 from core.market_calendar import normalize_asset_type
 from components.footer import render_action_footer
 from components.analysis_panel import render_analysis_panel
+from components.landing_panel import render_landing_panel
 from components.consensus_panel import render_consensus_panel
 from components.news_panel import render_news_panel
 from components.performance_panel import render_performance_panel
@@ -206,6 +207,17 @@ def render_analysis_tabs(
     tabs = create_main_tabs()
 
     with tabs[0]:
+        render_landing_panel(
+            data=data,
+            asset_name=inputs.asset_name,
+            current_price=current_price,
+            investment_amount=inputs.investment_amount,
+            currency_rate=inputs.currency_rate,
+            currency_symbol=inputs.currency_symbol,
+            forecast_data=forecast_data,
+        )
+
+    with tabs[1]:
         render_analysis_panel(
             data=data,
             asset_name=inputs.asset_name,
@@ -215,7 +227,8 @@ def render_analysis_tabs(
             ai_bundle=ai_bundle,
         )
 
-    with tabs[1]:
+        st.markdown("---")
+
         render_consensus_panel(
             forecast_data=forecast_data,
             last_date=data.index[-1],

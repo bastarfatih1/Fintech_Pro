@@ -73,6 +73,35 @@ def _parse_turkish_amount(raw_value: str) -> float:
         return 0.0
 
 
+def _resolve_display_currency_rate(
+    market_symbol: str,
+    currency_code: str,
+    currencies: Mapping[str, float],
+) -> float:
+    """
+    Fiyatın ekranda gösterileceği para birimi katsayısını hesaplar.
+
+    Normal hisse/emtia verileri çoğunlukla USD bazlı geldiği için eski akışta
+    TRY seçilince USDTRY ile çarpılıyordu. Ancak Gram Altın (TRY) zaten TRY
+    bazlı üretildiği için tekrar USDTRY ile çarpmak fiyatı yaklaşık 40-50 kat
+    şişirir. Bu fonksiyon o çift çarpımı engeller.
+    """
+    target_rate = float(currencies.get(currency_code, 1.0) or 1.0)
+
+    if market_symbol == "GRAM_ALTIN_TRY":
+        try_rate = float(currencies.get("TRY", 1.0) or 1.0)
+        if try_rate <= 0:
+            return 1.0
+
+        # USD bazlı kur tablosu mantığı:
+        # 1 USD = TRY_rate TRY
+        # 1 USD = target_rate hedef para
+        # 1 TRY = target_rate / TRY_rate hedef para
+        return target_rate / try_rate
+
+    return target_rate
+
+
 @dataclass(frozen=True)
 class InputSelection:
     """Kullanıcının üst panelde yaptığı seçimler."""
@@ -168,7 +197,11 @@ def render_input_panel(
             f"{calendar_config.calendar_name}"
         )
 
-    currency_rate = float(currencies.get(currency_code, 1.0))
+    currency_rate = _resolve_display_currency_rate(
+        market_symbol=market_symbol,
+        currency_code=currency_code,
+        currencies=currencies,
+    )
     currency_symbol = CURRENCY_SYMBOLS[currency_code]
 
     return InputSelection(
