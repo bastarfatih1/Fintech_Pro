@@ -9,83 +9,15 @@ import streamlit as st
 from services.ai_provider import ai_single_prompt_analysis, ai_text_call
 
 
-def render_premium_ai_loading() -> None:
-    """AI bekleme sürecini premium görünümlü kartla gösterir."""
-    st.markdown(
-        """
-        <style>
-        .premium-ai-loading-card {
-            margin: 0.6rem 0 1rem 0;
-            padding: 1rem 1.15rem;
-            border-radius: 18px;
-            border: 1px solid rgba(56, 189, 248, 0.35);
-            background:
-                radial-gradient(circle at top left, rgba(56, 189, 248, 0.20), transparent 35%),
-                linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.94));
-            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.30);
-            color: rgba(226, 232, 240, 0.96);
-            display: flex;
-            align-items: center;
-            gap: 0.85rem;
-        }
+def render_premium_ai_loading():
+    """AI sentezi sırasında HTML kullanmadan native Streamlit panel gösterir."""
+    import streamlit as st
 
-        .premium-ai-loader {
-            width: 28px;
-            height: 28px;
-            border-radius: 999px;
-            border: 3px solid rgba(148, 163, 184, 0.28);
-            border-top-color: rgba(56, 189, 248, 1);
-            border-right-color: rgba(34, 211, 238, 0.85);
-            animation: premiumSpin 0.9s linear infinite;
-            flex: 0 0 auto;
-        }
+    with st.container(border=True):
+        st.markdown("### AI analiz ediliyor")
+        st.caption("Haber akışı, teknik senaryo ve risk notu tek merkezde sentezleniyor.")
+        st.progress(88)
 
-        .premium-ai-loading-title {
-            font-weight: 750;
-            letter-spacing: 0.01em;
-            font-size: 0.98rem;
-        }
-
-        .premium-ai-loading-subtitle {
-            margin-top: 0.18rem;
-            color: rgba(148, 163, 184, 0.92);
-            font-size: 0.83rem;
-        }
-
-        @keyframes premiumSpin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-        </style>
-
-        <div class="premium-ai-loading-card">
-            <div class="premium-ai-loader"></div>
-            <div>
-                <div class="premium-ai-loading-title">AI analiz ediliyor</div>
-                <div class="premium-ai-loading-subtitle">
-                    Lütfen bekleyin, haber akışı ve teknik senaryolar tek merkezde sentezleniyor.
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-
-def ollama_ai_cagir(prompt, timeout=2.0):
-    """
-    Geriye uyumluluk için korundu.
-
-    Yeni sistemde aktif AI sağlayıcısı services/ai_provider.py içinden seçilir:
-    - Lokal: Ollama
-    - Yayın: OpenAI uyumlu API
-    - Hata: fallback
-    """
-    return ai_text_call(prompt, timeout=timeout)
-
-
-@st.cache_data(ttl=300, show_spinner=False)
 def ai_teknik_analiz_yorumu(enstruman, anlik, boga, ayi):
     """
     Teknik analiz yorumunu aktif AI sağlayıcısından alır.

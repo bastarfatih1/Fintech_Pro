@@ -7,3 +7,8 @@ __pycache__/
 .env.*
 !.env.example
 .streamlit/secrets.toml
+# local secrets / backups
+.streamlit/secrets*.toml*
+*_BACKUP_*.py
+*.bak
+.cache/

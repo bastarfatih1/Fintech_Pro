@@ -15,7 +15,7 @@ Hedef:
 - Nihai kararları merkezi bir kontrol süzgecinden geçirmek
 
 Bu belge bir ürün geliştirme çalışma düzenidir.
-
+  
 ---
 
 ## Ana prensip

@@ -16,6 +16,7 @@ from statsmodels.tsa.arima.model import ARIMA
 from risk.metrics import calculate_risk_metrics
 from core.market_calendar import get_market_calendar_config
 from services.data_provider import get_market_history
+from services.eviews_regression_engine import build_multi_factor_ols_route, evaluate_multi_factor_ols_backtest
 from forecast.backtest import (
     calculate_dynamic_model_weights,
     calculate_weighted_calibration_error,
@@ -214,6 +215,56 @@ def get_kurlar():
     kullanılmalıdır.
     """
     return get_kurlar_with_metadata().rates
+
+
+
+def _prepare_forecast_dataframe(df: pd.DataFrame, minimum_rows: int = 80) -> pd.DataFrame:
+    """
+    Tüm model motoruna girmeden önce piyasa verisini güvenli hale getirir.
+    Amaç: hiçbir varlıkta NaN / sonsuz / sıfır / negatif Close yüzünden model kırılmasın.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        raise ValueError("Analiz için piyasa verisi bulunamadı.")
+
+    data = df.copy()
+
+    if "Close" not in data.columns:
+        raise ValueError("Analiz için Close fiyat sütunu bulunamadı.")
+
+    numeric_columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    for col in numeric_columns:
+        if col in data.columns:
+            data[col] = pd.to_numeric(data[col], errors="coerce")
+            data[col] = data[col].replace([np.inf, -np.inf], np.nan)
+
+    data = data.dropna(subset=["Close"])
+    data = data[data["Close"] > 0]
+
+    if data.empty:
+        raise ValueError("Analiz için geçerli pozitif kapanış fiyatı bulunamadı.")
+
+    for col in ["Open", "High", "Low"]:
+        if col not in data.columns:
+            data[col] = data["Close"]
+        else:
+            data[col] = data[col].fillna(data["Close"])
+            data.loc[data[col] <= 0, col] = data["Close"]
+
+    if "Volume" not in data.columns:
+        data["Volume"] = 0.0
+    else:
+        data["Volume"] = data["Volume"].fillna(0.0)
+
+    data = data[~data.index.duplicated(keep="last")]
+    data = data.sort_index()
+
+    if len(data) < minimum_rows:
+        raise ValueError(
+            f"Analiz için yeterli geçmiş veri yok. Gerekli en az satır: {minimum_rows}, mevcut: {len(data)}."
+        )
+
+    return data
 
 def volatile_path_generator(
     curr,
@@ -420,6 +471,267 @@ def _safe_numeric(value, default=0.0):
     return float(numeric)
 
 
+
+
+def _normalize_model_key(model_name):
+    """Model adlarını karşılaştırmak için sadeleştirir."""
+    return (
+        str(model_name or "")
+        .strip()
+        .lower()
+        .replace(" ", "_")
+        .replace("-", "_")
+    )
+
+
+
+def _normalize_backtest_status_columns(backtest_df):
+    """
+    Backtest tablolarında Durum kolonu eksik/boş gelirse standartlaştırır.
+    Başarılı RMSE üreten aktif modelin Durum alanı boş kalmamalıdır.
+    """
+    if not isinstance(backtest_df, pd.DataFrame) or backtest_df.empty:
+        return backtest_df
+
+    df = backtest_df.copy()
+
+    if "Durum" not in df.columns:
+        df["Durum"] = ""
+
+    for idx, row in df.iterrows():
+        status = str(row.get("Durum", "")).strip()
+        model = str(row.get("Model", "")).strip()
+        rmse = _safe_numeric(row.get("RMSE"), default=np.nan)
+
+        if status in {"", "-", "—", "None", "nan", "NaN"}:
+            if model and np.isfinite(rmse) and rmse > 0:
+                df.at[idx, "Durum"] = "başarılı"
+            else:
+                df.at[idx, "Durum"] = "bilinmiyor"
+
+    return df
+
+
+def _apply_strict_consensus_gate(
+    model_weights,
+    active_models,
+    backtest_results,
+    min_passed_weight=0.03,
+):
+    """
+    Sprint 3.32A - Strict Consensus Gate Fix
+
+    Kurallar:
+    1. Referansı geçmeyen model konsensüse katılamaz.
+    2. Referansı geçen aktif model ağırlığı 0 kalamaz.
+    3. Ağırlıklar tekrar normalize edilir.
+    """
+    if not isinstance(backtest_results, pd.DataFrame) or backtest_results.empty:
+        return {
+            model_name: float(model_weights.get(model_name, 0.0))
+            for model_name in active_models
+        }
+
+    if "Model" not in backtest_results.columns or "Referansı Geçti" not in backtest_results.columns:
+        return {
+            model_name: float(model_weights.get(model_name, 0.0))
+            for model_name in active_models
+        }
+
+    active_models = list(active_models)
+    active_key_map = {
+        _normalize_model_key(model_name): model_name
+        for model_name in active_models
+    }
+
+    passed_keys = set()
+
+    for _, row in backtest_results.iterrows():
+        model_raw = row.get("Model", "")
+        passed_raw = str(row.get("Referansı Geçti", "")).strip().lower()
+
+        model_key = _normalize_model_key(model_raw)
+
+        if model_key in {"naive_last_price", "no_change_benchmark", "referans"}:
+            continue
+
+        if passed_raw == "evet" and model_key in active_key_map:
+            passed_keys.add(model_key)
+
+    if not passed_keys:
+        raise RuntimeError(
+            "Referans benchmarkı geçen aktif model yok. "
+            "Konsensüs tahmini üretilmedi."
+        )
+
+    strict_weights = {}
+
+    for model_name in active_models:
+        model_key = _normalize_model_key(model_name)
+
+        if model_key not in passed_keys:
+            strict_weights[model_name] = 0.0
+            continue
+
+        old_weight = float(model_weights.get(model_name, 0.0) or 0.0)
+
+        # Kritik düzeltme:
+        # Model testi geçtiyse ağırlığı 0 kalamaz.
+        strict_weights[model_name] = max(old_weight, float(min_passed_weight))
+
+    total_weight = float(sum(strict_weights.values()))
+
+    if total_weight <= 0:
+        raise RuntimeError(
+            "Konsensüs ağırlığı üretilemedi. "
+            "Referansı geçen modeller ağırlık alamadı."
+        )
+
+    return {
+        model_name: weight / total_weight
+        for model_name, weight in strict_weights.items()
+    }
+
+
+
+
+def _add_consensus_explainability_columns(
+    backtest_df,
+    model_weights,
+    active_models,
+    model_statuses,
+):
+    """
+    Sprint 3.32C - Consensus Explainability Layer
+
+    Tabloda sadece Evet/Hayır göstermeyelim.
+    Neden konsensüse girdi/girmedi açıkça yazalım.
+    """
+    if not isinstance(backtest_df, pd.DataFrame) or backtest_df.empty:
+        return backtest_df
+
+    if "Model" not in backtest_df.columns:
+        return backtest_df
+
+    enriched = backtest_df.copy()
+
+    active_models = list(active_models)
+    active_key_map = {
+        _normalize_model_key(model_name): model_name
+        for model_name in active_models
+    }
+
+    weight_key_map = {
+        _normalize_model_key(model_name): float(weight or 0.0)
+        for model_name, weight in dict(model_weights or {}).items()
+    }
+
+    status_key_map = {
+        _normalize_model_key(model_name): status
+        for model_name, status in dict(model_statuses or {}).items()
+    }
+
+    benchmark_keys = {
+        "naive_last_price",
+        "no_change_benchmark",
+        "historical_drift_benchmark",
+        "moving_average_benchmark",
+        "referans",
+    }
+
+    reasons = []
+    joins = []
+    display_weights = []
+    technical_statuses = []
+    rmse_ratios = []
+    rmse_scores = []
+
+    for _, row in enriched.iterrows():
+        model_name = row.get("Model", "")
+        model_key = _normalize_model_key(model_name)
+
+        is_benchmark = model_key in benchmark_keys
+        active = model_key in active_key_map
+        weight = float(weight_key_map.get(model_key, 0.0) or 0.0)
+
+        status_obj = status_key_map.get(model_key, {})
+        if isinstance(status_obj, dict):
+            technical_status = str(status_obj.get("durum", "bilinmiyor"))
+            technical_error = str(status_obj.get("hata", "") or "")
+        else:
+            technical_status = str(status_obj or "bilinmiyor")
+            technical_error = ""
+
+        passed_raw = str(row.get("Referansı Geçti", "")).strip().lower()
+        passed = passed_raw == "evet"
+
+        rmse = np.nan
+        ref_rmse = np.nan
+
+        try:
+            rmse = float(row.get("RMSE", np.nan))
+        except Exception:
+            rmse = np.nan
+
+        try:
+            ref_rmse = float(row.get("Referans RMSE", np.nan))
+        except Exception:
+            ref_rmse = np.nan
+
+        if np.isfinite(rmse) and np.isfinite(ref_rmse) and ref_rmse > 0:
+            rmse_ratio = rmse / ref_rmse
+            rmse_score = max(0.0, min(100.0, (1.0 - rmse_ratio) * 100.0))
+        else:
+            rmse_ratio = np.nan
+            rmse_score = np.nan
+
+        if is_benchmark:
+            join = "Hayır"
+            reason = "Kontrol benchmarkı; tahmin modeli olmadığı için konsensüse katılmaz."
+            display_weight = 0.0
+        elif not active:
+            join = "Hayır"
+            reason = "Aktif model rotası üretmedi veya model listesinde yok."
+            display_weight = 0.0
+        elif technical_status != "başarılı":
+            join = "Hayır"
+            reason = "Model teknik olarak geçerli rota üretemedi."
+            if technical_error:
+                reason += f" Hata: {technical_error}"
+            display_weight = 0.0
+        elif not passed:
+            join = "Hayır"
+            reason = "Benchmark testini geçemedi; bu yüzden konsensüse alınmadı."
+            display_weight = 0.0
+        elif weight <= 0:
+            join = "Hayır"
+            reason = (
+                "Model testi geçti ama ağırlık skoru 0 kaldı. "
+                "Bu durum mantıksal kontrol gerektirir."
+            )
+            display_weight = 0.0
+        else:
+            join = "Evet"
+            reason = "Model testi geçti ve pozitif konsensüs ağırlığı aldı."
+            display_weight = weight * 100.0
+
+        reasons.append(reason)
+        joins.append(join)
+        display_weights.append(round(display_weight, 4))
+        technical_statuses.append(technical_status)
+        rmse_ratios.append(round(rmse_ratio, 4) if np.isfinite(rmse_ratio) else np.nan)
+        rmse_scores.append(round(rmse_score, 2) if np.isfinite(rmse_score) else np.nan)
+
+    enriched["Teknik Durum"] = technical_statuses
+    enriched["RMSE / Referans RMSE"] = rmse_ratios
+    enriched["RMSE Skoru"] = rmse_scores
+    enriched["Konsensüs Ağırlığı %"] = display_weights
+    enriched["Konsensüse Katılıyor"] = joins
+    enriched["Konsensüse Girememe Nedeni"] = reasons
+
+    return enriched
+
+
 def _ensure_diversified_consensus_weights(
     model_weights,
     active_models,
@@ -620,6 +932,433 @@ def hesapla_gecmis_performans(data, curr, ana_para, kur_val, s):
     except Exception:
         return pd.DataFrame([{"Dönem": "Veri Yok", "Eski Fiyat": "-", "Güncel Fiyat": "-", "Nominal Getiri": "-", "Reel Getiri": "-", "Sermaye Değeri": "-"}])
 
+
+def _clip01(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+    if not np.isfinite(value):
+        return 0.0
+
+    return max(0.0, min(value, 1.0))
+
+
+def _model_horizon_profile(model_name, horizon_days):
+    """
+    Modelin hangi vadede daha anlamlı kullanılacağını gösteren profil katsayısı.
+    Bu katsayı tek başına karar vermez; RMSE, yön doğruluğu, stabilite ve benchmark sonucu
+    ile birlikte çalışır.
+    """
+    key = _normalize_model_key(model_name)
+    d = int(horizon_days or 1)
+
+    if d <= 5:
+        profile = {
+            "arima": 1.25,
+            "monte_carlo": 0.85,
+            "linear_regression": 0.85,
+            "multi_factor_ols": 0.80,
+            "random_forest": 0.75,
+            "xgboost": 0.75,
+            "svr": 0.65,
+        }
+    elif d <= 20:
+        profile = {
+            "arima": 1.15,
+            "monte_carlo": 0.95,
+            "linear_regression": 0.95,
+            "multi_factor_ols": 0.95,
+            "random_forest": 0.85,
+            "xgboost": 0.85,
+            "svr": 0.70,
+        }
+    elif d <= 126:
+        profile = {
+            "multi_factor_ols": 1.25,
+            "linear_regression": 1.10,
+            "monte_carlo": 1.00,
+            "arima": 0.90,
+            "random_forest": 0.90,
+            "xgboost": 0.90,
+            "svr": 0.75,
+        }
+    elif d <= 252:
+        profile = {
+            "multi_factor_ols": 1.35,
+            "linear_regression": 1.10,
+            "monte_carlo": 1.05,
+            "random_forest": 0.90,
+            "xgboost": 0.90,
+            "arima": 0.75,
+            "svr": 0.70,
+        }
+    else:
+        profile = {
+            "multi_factor_ols": 1.50,
+            "monte_carlo": 1.10,
+            "linear_regression": 0.95,
+            "random_forest": 0.75,
+            "xgboost": 0.75,
+            "arima": 0.55,
+            "svr": 0.65,
+        }
+
+    return float(profile.get(key, 0.70))
+
+
+def _collect_backtest_metrics(backtest_df):
+    metrics = {}
+
+    if not isinstance(backtest_df, pd.DataFrame) or backtest_df.empty:
+        return metrics
+
+    if "Model" not in backtest_df.columns:
+        return metrics
+
+    for _, row in backtest_df.iterrows():
+        model_name = str(row.get("Model", ""))
+        key = _normalize_model_key(model_name)
+
+        if key in {
+            "naive_last_price",
+            "no_change_benchmark",
+            "historical_drift_benchmark",
+            "moving_average_benchmark",
+            "referans",
+        }:
+            continue
+
+        metrics[key] = {
+            "model_name": model_name,
+            "status": str(row.get("Durum", "")).strip().lower(),
+            "passed": str(row.get("Referansı Geçti", "")).strip().lower() == "evet",
+            "rmse": _safe_numeric(row.get("RMSE"), default=np.nan),
+            "benchmark_rmse": _safe_numeric(row.get("Benchmark RMSE"), default=np.nan),
+            "improvement": _safe_numeric(row.get("RMSE İyileşme %"), default=0.0),
+            "direction": _safe_numeric(row.get("Yön Doğruluğu %"), default=50.0),
+            "stability": _safe_numeric(row.get("Stabilite Skoru"), default=50.0),
+        }
+
+    return metrics
+
+
+def _score_model_for_horizon(model_name, model_metrics, best_rmse, horizon_days):
+    key = _normalize_model_key(model_name)
+    row = model_metrics.get(key, {})
+
+    status = str(row.get("status", "")).lower()
+    if status and status not in {"başarılı", "basarili", "success", "successful"}:
+        return 0.0
+
+    rmse = _safe_numeric(row.get("rmse"), default=np.nan)
+    benchmark_rmse = _safe_numeric(row.get("benchmark_rmse"), default=np.nan)
+    direction = _safe_numeric(row.get("direction"), default=50.0)
+    stability = _safe_numeric(row.get("stability"), default=50.0)
+    improvement = _safe_numeric(row.get("improvement"), default=0.0)
+    passed = bool(row.get("passed", False))
+
+    if np.isfinite(rmse) and rmse > 0 and np.isfinite(best_rmse) and best_rmse > 0:
+        rmse_score = _clip01(best_rmse / rmse)
+    else:
+        rmse_score = 0.20
+
+    direction_score = _clip01(direction / 100.0)
+    stability_score = _clip01(stability / 100.0)
+
+    # -100 kötü, 0 nötr, +100 çok iyi olacak şekilde yumuşak skor.
+    improvement_score = _clip01((improvement + 100.0) / 200.0)
+
+    profile_score = _model_horizon_profile(model_name, horizon_days)
+
+    if passed:
+        pass_multiplier = 1.00
+    else:
+        # Benchmarkı geçemeyen model lider olamaz; ama vade profilinde bilgi taşıyorsa
+        # sınırlı destek ağırlığı alabilir.
+        rmse_ratio = np.inf
+        if np.isfinite(rmse) and rmse > 0 and np.isfinite(benchmark_rmse) and benchmark_rmse > 0:
+            rmse_ratio = rmse / benchmark_rmse
+
+        if rmse_ratio <= 1.08:
+            pass_multiplier = 0.42
+        elif rmse_ratio <= 1.25:
+            pass_multiplier = 0.28
+        else:
+            pass_multiplier = 0.12
+
+    score = (
+        (0.48 * rmse_score)
+        + (0.22 * direction_score)
+        + (0.18 * stability_score)
+        + (0.12 * improvement_score)
+    )
+
+    score *= profile_score
+    score *= pass_multiplier
+
+    return max(float(score), 0.0)
+
+
+def _normalize_weight_dict(weights):
+    cleaned = {}
+
+    for model_name, weight in dict(weights or {}).items():
+        try:
+            value = float(weight)
+        except (TypeError, ValueError):
+            value = 0.0
+
+        if not np.isfinite(value) or value < 0:
+            value = 0.0
+
+        cleaned[model_name] = value
+
+    total = float(sum(cleaned.values()))
+
+    if total <= 0:
+        return {
+            model_name: 0.0
+            for model_name in cleaned.keys()
+        }
+
+    return {
+        model_name: weight / total
+        for model_name, weight in cleaned.items()
+    }
+
+
+def _cap_failed_model_weight(weights, model_metrics, max_failed_total=0.35):
+    """
+    Benchmarkı geçemeyen modeller tamamen yok edilmez; ama toplam etkileri sınırlanır.
+    Böylece tek modele kilitlenme azalır, ama başarısız modeller konsensüsü ele geçiremez.
+    """
+    weights = _normalize_weight_dict(weights)
+
+    passed_total = 0.0
+    failed_total = 0.0
+
+    for model_name, weight in weights.items():
+        key = _normalize_model_key(model_name)
+        passed = bool(model_metrics.get(key, {}).get("passed", False))
+
+        if passed:
+            passed_total += weight
+        else:
+            failed_total += weight
+
+    if passed_total <= 0 or failed_total <= max_failed_total:
+        return weights
+
+    failed_scale = max_failed_total / failed_total
+    passed_scale = (1.0 - max_failed_total) / passed_total
+
+    capped = {}
+
+    for model_name, weight in weights.items():
+        key = _normalize_model_key(model_name)
+        passed = bool(model_metrics.get(key, {}).get("passed", False))
+
+        if passed:
+            capped[model_name] = weight * passed_scale
+        else:
+            capped[model_name] = weight * failed_scale
+
+    return _normalize_weight_dict(capped)
+
+
+def _weights_for_horizon(rotalar, backtest_df, horizon_days):
+    model_metrics = _collect_backtest_metrics(backtest_df)
+
+    rmse_values = [
+        row.get("rmse")
+        for row in model_metrics.values()
+        if np.isfinite(row.get("rmse", np.nan)) and row.get("rmse", np.nan) > 0
+    ]
+
+    best_rmse = min(rmse_values) if rmse_values else np.nan
+
+    raw_weights = {}
+
+    for model_name, route in dict(rotalar or {}).items():
+        try:
+            route_array = np.asarray(route, dtype=float)
+        except Exception:
+            continue
+
+        idx = int(horizon_days) - 1
+
+        if idx < 0 or idx >= len(route_array):
+            continue
+
+        value = route_array[idx]
+
+        if not np.isfinite(value) or value <= 0:
+            continue
+
+        raw_weights[model_name] = _score_model_for_horizon(
+            model_name=model_name,
+            model_metrics=model_metrics,
+            best_rmse=best_rmse,
+            horizon_days=horizon_days,
+        )
+
+    # Eğer tüm skorlar sıfırlandıysa, veri üreten modellerden en iyi RMSE'ye yakın olanlara
+    # çok düşük ama normalize edilebilir bir skor ver.
+    if sum(raw_weights.values()) <= 0:
+        for model_name in raw_weights.keys():
+            raw_weights[model_name] = 0.01
+
+    weights = _normalize_weight_dict(raw_weights)
+    weights = _cap_failed_model_weight(weights, model_metrics=model_metrics)
+
+    return weights
+
+
+def _leader_from_weights(weights):
+    if not weights:
+        return "-", 0.0, 0
+
+    positive = {
+        model_name: float(weight)
+        for model_name, weight in weights.items()
+        if float(weight) > 0.0001
+    }
+
+    if not positive:
+        return "-", 0.0, 0
+
+    leader = max(positive, key=positive.get)
+
+    return leader, float(positive[leader]), len(positive)
+
+
+def _average_weight_dict(weight_dicts):
+    accumulator = {}
+    count = 0
+
+    for weights in weight_dicts:
+        if not isinstance(weights, dict) or not weights:
+            continue
+
+        count += 1
+
+        for model_name, weight in weights.items():
+            accumulator[model_name] = accumulator.get(model_name, 0.0) + float(weight)
+
+    if count <= 0:
+        return {}
+
+    averaged = {
+        model_name: weight / count
+        for model_name, weight in accumulator.items()
+    }
+
+    return _normalize_weight_dict(averaged)
+
+
+def _build_horizon_aware_consensus_path(
+    rotalar,
+    backtest_df,
+    periyot_gun,
+    target_horizons,
+):
+    """
+    Tek genel ağırlık yerine, her gün/vade için ayrı model ağırlığı üretir.
+    Kısa vadede kısa vade profili güçlü modeller, uzun vadede faktör/uzun vade profili
+    güçlü modeller daha fazla söz sahibi olur.
+    """
+    if not rotalar:
+        raise RuntimeError("Vade bazlı konsensüs için geçerli model rotası bulunamadı.")
+
+    consensus_path = np.zeros(int(periyot_gun), dtype=float)
+    daily_weights = []
+
+    for day in range(1, int(periyot_gun) + 1):
+        weights = _weights_for_horizon(
+            rotalar=rotalar,
+            backtest_df=backtest_df,
+            horizon_days=day,
+        )
+
+        value = 0.0
+        total = 0.0
+
+        for model_name, weight in weights.items():
+            if weight <= 0:
+                continue
+
+            route = np.asarray(rotalar[model_name], dtype=float)
+
+            if day - 1 >= len(route):
+                continue
+
+            route_value = route[day - 1]
+
+            if not np.isfinite(route_value) or route_value <= 0:
+                continue
+
+            value += float(route_value) * float(weight)
+            total += float(weight)
+
+        if total <= 0:
+            raise RuntimeError(
+                f"{day}. gün için vade bazlı konsensüs ağırlığı üretilemedi."
+            )
+
+        consensus_path[day - 1] = value / total
+        daily_weights.append(weights)
+
+    if not np.isfinite(consensus_path).all() or np.any(consensus_path <= 0):
+        raise RuntimeError("Vade bazlı konsensüs rotası geçersiz değer üretti.")
+
+    horizon_model_weights = {}
+    horizon_summary = []
+
+    for label, days in list(target_horizons or []):
+        if int(days) > int(periyot_gun):
+            continue
+
+        weights = _weights_for_horizon(
+            rotalar=rotalar,
+            backtest_df=backtest_df,
+            horizon_days=int(days),
+        )
+
+        leader, leader_weight, active_count = _leader_from_weights(weights)
+
+        horizon_model_weights[str(label)] = weights
+        horizon_summary.append(
+            {
+                "Vade": str(label),
+                "Gün": int(days),
+                "Konsensüse Giren Model": int(active_count),
+                "Lider Model": str(leader),
+                "Lider Ağırlık %": round(float(leader_weight) * 100.0, 2),
+                "Ağırlık Dağılımı": ", ".join(
+                    [
+                        f"{model}: %{weight * 100.0:.1f}"
+                        for model, weight in sorted(
+                            weights.items(),
+                            key=lambda item: item[1],
+                            reverse=True,
+                        )
+                        if weight > 0.0001
+                    ]
+                ),
+            }
+        )
+
+    average_weights = _average_weight_dict(
+        horizon_model_weights.values()
+        if horizon_model_weights
+        else daily_weights
+    )
+
+    return consensus_path, average_weights, horizon_model_weights, horizon_summary
+
+
 def gelecek_senaryolari_hesapla(
     data,
     periyot_gun,
@@ -633,7 +1372,8 @@ def gelecek_senaryolari_hesapla(
         asset_type=asset_type,
         market_symbol=market_symbol,
     )
-    df = data.copy()
+    df = _prepare_forecast_dataframe(data)
+    curr = float(pd.to_numeric(df["Close"], errors="coerce").dropna().iloc[-1])
     df['Lag_1'] = df['Close'].shift(1)
     df['Lag_2'] = df['Close'].shift(2)
     df['Lag_3'] = df['Close'].shift(3)
@@ -763,11 +1503,35 @@ def gelecek_senaryolari_hesapla(
 
     def kaydet_basarisiz_model(model_adi, hata):
         """Başarısız modeli konsensüsten çıkarır ve hata bilgisini kaydeder."""
-        logger.warning("%s modeli başarısız: %s", model_adi, hata)
+        logger.debug("%s modeli başarısız: %s", model_adi, hata)
         model_durumlari[model_adi] = {
             "durum": "başarısız",
             "hata": str(hata),
         }
+
+    try:
+        multi_factor_ols_route = build_multi_factor_ols_route(
+            target_data=df,
+            forecast_days=periyot_gun,
+            current_price=curr,
+            market_symbol=market_symbol or "",
+            asset_name=str(market_symbol or "Seçilen Varlık"),
+            asset_type=asset_type,
+        )
+        kaydet_basarili_model(
+            "Multi_Factor_OLS",
+            multi_factor_ols_route,
+            rota_turu="Dynamic Factor Intelligence OLS Rotası",
+        )
+    except (
+        ValueError,
+        TypeError,
+        FloatingPointError,
+        RuntimeError,
+        KeyError,
+        ImportError,
+    ) as exc:
+        kaydet_basarisiz_model("Multi_Factor_OLS", exc)
 
     try:
         lr = LinearRegression()
@@ -883,48 +1647,71 @@ def gelecek_senaryolari_hesapla(
         mc_upper = np.full(periyot_gun, np.nan)
         mc_lower = np.full(periyot_gun, np.nan)
 
+    try:
+        multi_factor_backtest_df = evaluate_multi_factor_ols_backtest(
+            target_data=df,
+            market_symbol=market_symbol or "",
+            asset_name=str(market_symbol or "Seçilen Varlık"),
+            asset_type=asset_type,
+            test_window=5,
+            max_windows=250,
+        )
+
+        if isinstance(backtest_df, pd.DataFrame):
+            backtest_df = pd.concat(
+                [backtest_df, multi_factor_backtest_df],
+                ignore_index=True,
+            )
+        else:
+            backtest_df = multi_factor_backtest_df
+
+    except (
+        ValueError,
+        TypeError,
+        FloatingPointError,
+        RuntimeError,
+        KeyError,
+        ImportError,
+    ) as exc:
+        logger.warning("Multi_Factor_OLS backtesti çalıştırılamadı: %s", exc)
+        backtest_messages.append(f"Multi_Factor_OLS: {exc}")
+
+    backtest_df = _normalize_backtest_status_columns(backtest_df)
+
     if not rotalar:
         raise RuntimeError(
             "Tahmin modellerinin hiçbiri geçerli sonuç üretemedi."
         )
 
-    model_agirliklari = calculate_dynamic_model_weights(
-        backtest_results=backtest_df,
-        active_models=rotalar.keys(),
+    # Sprint 3.40 - Horizon-Aware Consensus Engine
+    # Tek genel ağırlık yerine, her vade için ayrı model ağırlığı üretilir.
+    periyotlar = calendar_config.horizons
+
+    (
+        konsensus_rota,
+        model_agirliklari,
+        horizon_model_agirliklari,
+        horizon_consensus_summary,
+    ) = _build_horizon_aware_consensus_path(
+        rotalar=rotalar,
+        backtest_df=backtest_df,
+        periyot_gun=periyot_gun,
+        target_horizons=periyotlar,
     )
-    model_agirliklari = _ensure_diversified_consensus_weights(
-        model_weights=model_agirliklari,
-        active_models=rotalar.keys(),
-        backtest_results=backtest_df,
-    )
-
-    base_path = np.zeros(periyot_gun, dtype=float)
-    toplam_w = 0.0
-
-    for model_adi, model_rotasi in rotalar.items():
-        agirlik = float(model_agirliklari.get(model_adi, 0.0))
-
-        if agirlik <= 0:
-            continue
-
-        base_path += model_rotasi * agirlik
-        toplam_w += agirlik
-
-    if toplam_w <= 0:
-        raise RuntimeError(
-            "Geçerli konsensüs ağırlığı üretilemedi."
-        )
-
-    konsensus_rota = base_path / toplam_w
 
     if not backtest_df.empty and "Model" in backtest_df.columns:
-        backtest_df = backtest_df.copy()
-        backtest_df["Konsensüs Ağırlığı %"] = (
-            backtest_df["Model"]
-            .map(model_agirliklari)
-            .fillna(0.0)
-            .astype(float)
-            * 100.0
+        backtest_df = _add_consensus_explainability_columns(
+            backtest_df=backtest_df,
+            model_weights=model_agirliklari,
+            active_models=rotalar.keys(),
+            model_statuses=model_durumlari,
+        )
+
+    if not rotalar:
+        raise ValueError(
+            "Hiçbir model geçerli rota üretemedi. "
+            "Sistem güvenli yedek rota üretmedi. "
+            "Veri, feature veya model eğitim koşulları tanı panelinden incelenmelidir."
         )
 
     if "Monte_Carlo" not in rotalar:
@@ -982,6 +1769,9 @@ def gelecek_senaryolari_hesapla(
             baz_native = float(konsensus_rota[d - 1])
             ust_native = float(senaryo_ust_rota[d - 1])
 
+            vade_weights = horizon_model_agirliklari.get(str(l), {})
+            lider_model, lider_agirlik, aktif_model_sayisi = _leader_from_weights(vade_weights)
+
             baz_getiri = (baz_native - curr) / curr
             alt_getiri = (alt_native - curr) / curr
             ust_getiri = (ust_native - curr) / curr
@@ -989,6 +1779,9 @@ def gelecek_senaryolari_hesapla(
             gelecek_tablo.append(
                 {
                     "Vade": l,
+                    "Konsensüs Model Sayısı": int(aktif_model_sayisi),
+                    "Lider Model": str(lider_model),
+                    "Lider Ağırlık %": round(float(lider_agirlik) * 100.0, 2),
                     "Kötümser Senaryo": round(
                         alt_native * kur_val,
                         2,
@@ -1045,6 +1838,8 @@ def gelecek_senaryolari_hesapla(
         "rotalar": {k: v * kur_val for k, v in rotalar.items()},
         "model_durumlari": model_durumlari,
         "model_agirliklari": model_agirliklari,
+        "horizon_model_agirliklari": horizon_model_agirliklari,
+        "horizon_consensus_summary": horizon_consensus_summary,
         "rota_turleri": rota_turleri,
         "projeksiyon_bildirimi": (
             "Regresyon modellerinin ara dönem çizgileri görsel senaryo "
