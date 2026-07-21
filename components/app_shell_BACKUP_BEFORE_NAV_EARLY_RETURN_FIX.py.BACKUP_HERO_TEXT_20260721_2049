@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import streamlit as st
+
+
+NAV_ITEMS = [
+    ("Genel Bakış", "Ana özet ve konsensüs", "⌂"),
+    ("Analiz Sonuçları", "Senaryo ve performans", "▣"),
+    ("Testler ve Backtest", "Model doğrulama", "↺"),
+    ("Faktör Analizi", "OLS ve faktör etkileri", "◇"),
+    ("Vade Analizi", "Vade bazlı güven", "◷"),
+    ("AI Haberler", "Haber ve yorum", "✦"),
+    ("Tanı Paneli", "Sistem tanısı", "⚙"),
+]
+
+
+def inject_first_app_shell_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background:
+                radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.18), transparent 32%),
+                radial-gradient(circle at 88% 18%, rgba(14, 165, 233, 0.12), transparent 34%),
+                linear-gradient(135deg, #020617 0%, #07111f 48%, #020617 100%) !important;
+        }
+
+        .block-container {
+            padding-top: 1.1rem !important;
+            padding-bottom: 2.5rem !important;
+            max-width: 1500px !important;
+        }
+
+        [data-testid="stSidebar"] {
+            min-width: 270px !important;
+            width: 270px !important;
+            background:
+                radial-gradient(circle at 0% 0%, rgba(37, 99, 235, 0.22), transparent 36%),
+                linear-gradient(180deg, rgba(2, 6, 23, 0.99), rgba(15, 23, 42, 0.98)) !important;
+            border-right: 1px solid rgba(56, 189, 248, 0.22);
+        }
+
+        [data-testid="stSidebar"] > div {
+            padding-top: 1.35rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+
+        .fp-shell-logo {
+            padding-bottom: 20px;
+            margin-bottom: 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        }
+
+        .fp-shell-logo-main {
+            color: #dbeafe;
+            font-size: 2.05rem;
+            font-weight: 950;
+            letter-spacing: 0.18em;
+            line-height: 1;
+            text-shadow: 0 0 24px rgba(59, 130, 246, 0.34);
+        }
+
+        .fp-shell-logo-sub {
+            color: #93c5fd;
+            font-size: 0.66rem;
+            font-weight: 900;
+            letter-spacing: 0.42em;
+            margin-top: 7px;
+        }
+
+        .fp-shell-status {
+            margin: 12px 0 18px 0;
+            padding: 13px 14px;
+            border-radius: 16px;
+            background:
+                radial-gradient(circle at right top, rgba(56, 189, 248, 0.16), transparent 38%),
+                rgba(15, 23, 42, 0.72);
+            border: 1px solid rgba(56, 189, 248, 0.22);
+            color: rgba(226, 232, 240, 0.78);
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+
+        .fp-shell-status strong {
+            display: block;
+            color: #f8fafc;
+            font-size: 0.94rem;
+            margin-bottom: 2px;
+        }
+
+        .fp-shell-section-label {
+            margin: 17px 0 9px 0;
+            color: rgba(147, 197, 253, 0.90);
+            font-size: 0.70rem;
+            font-weight: 950;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+        }
+
+        .fp-active-page-pill {
+            margin: 0 0 12px 0;
+            padding: 11px 12px;
+            border-radius: 14px;
+            color: #dbeafe;
+            font-size: 0.80rem;
+            line-height: 1.35;
+            border: 1px solid rgba(56, 189, 248, 0.20);
+            background:
+                radial-gradient(circle at left, rgba(56, 189, 248, 0.18), transparent 32%),
+                rgba(15, 23, 42, 0.66);
+        }
+
+        .fp-active-page-pill strong {
+            display: block;
+            color: #ffffff;
+            font-size: 0.92rem;
+            margin-bottom: 2px;
+        }
+
+        /* Sidebar butonlarını FIRST tarzı menüye çevir */
+        [data-testid="stSidebar"] div.stButton > button {
+            width: 100% !important;
+            min-height: 48px !important;
+            justify-content: flex-start !important;
+            text-align: left !important;
+            padding: 0 14px !important;
+            margin: 0 0 8px 0 !important;
+            border-radius: 14px !important;
+            color: rgba(226, 232, 240, 0.92) !important;
+            font-size: 0.91rem !important;
+            font-weight: 850 !important;
+            letter-spacing: 0 !important;
+            border: 1px solid rgba(56, 189, 248, 0.18) !important;
+            background:
+                radial-gradient(circle at left, rgba(56, 189, 248, 0.12), transparent 34%),
+                rgba(15, 23, 42, 0.58) !important;
+            box-shadow: none !important;
+        }
+
+        [data-testid="stSidebar"] div.stButton > button:hover {
+            color: #ffffff !important;
+            border-color: rgba(125, 211, 252, 0.72) !important;
+            background:
+                radial-gradient(circle at left, rgba(125, 211, 252, 0.24), transparent 35%),
+                rgba(30, 41, 59, 0.76) !important;
+            transform: translateX(2px);
+        }
+
+        [data-testid="stSidebar"] div.stButton > button[kind="primary"] {
+            color: #ffffff !important;
+            border-color: rgba(125, 211, 252, 0.95) !important;
+            background:
+                radial-gradient(circle at 13% 50%, rgba(186, 230, 253, 0.42), transparent 24%),
+                linear-gradient(135deg, #0ea5e9 0%, #2563eb 58%, #1e40af 100%) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.18),
+                0 12px 30px rgba(37, 99, 235, 0.28) !important;
+        }
+
+        [data-testid="stSidebar"] div.stButton > button p {
+            color: inherit !important;
+            font-size: 0.91rem !important;
+            font-weight: 850 !important;
+            margin: 0 !important;
+        }
+
+        .fp-shell-plan {
+            margin-top: 22px;
+            padding: 14px 14px 16px 14px;
+            border-radius: 16px;
+            border: 1px solid rgba(56, 189, 248, 0.22);
+            background:
+                radial-gradient(circle at 100% 0%, rgba(234, 179, 8, 0.14), transparent 35%),
+                linear-gradient(135deg, rgba(15, 23, 42, 0.88), rgba(2, 6, 23, 0.88));
+        }
+
+        .fp-shell-plan-title {
+            color: #f8fafc;
+            font-weight: 950;
+            font-size: 1rem;
+        }
+
+        .fp-shell-plan-sub {
+            color: #cbd5e1;
+            font-size: 0.82rem;
+            margin-top: 2px;
+        }
+
+        .fp-shell-progress {
+            height: 7px;
+            margin: 11px 0 10px 0;
+            border-radius: 999px;
+            background: rgba(30, 41, 59, 0.95);
+            overflow: hidden;
+        }
+
+        .fp-shell-progress > div {
+            height: 100%;
+            width: 71%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #38bdf8, #2563eb);
+        }
+
+        .fp-shell-plan-btn {
+            margin-top: 10px;
+            padding: 10px 12px;
+            text-align: center;
+            border-radius: 11px;
+            border: 1px solid rgba(125, 211, 252, 0.28);
+            color: #dbeafe;
+            font-weight: 900;
+            background: rgba(15, 23, 42, 0.74);
+        }
+
+        .fp-shell-active-page {
+            margin: 0 0 16px 0;
+            padding: 12px 16px;
+            border-radius: 16px;
+            border: 1px solid rgba(56, 189, 248, 0.22);
+            background:
+                radial-gradient(circle at left, rgba(56, 189, 248, 0.14), transparent 34%),
+                linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(2, 6, 23, 0.96));
+        }
+
+        .fp-shell-active-title {
+            color: #f8fafc;
+            font-size: 1.15rem;
+            font-weight: 950;
+        }
+
+        .fp-shell-active-sub {
+            color: #94a3b8;
+            font-size: .84rem;
+            margin-top: 3px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _nav_label(icon: str, title: str, active: bool) -> str:
+    prefix = "▸" if active else " "
+    return f"{prefix} {icon}  {title}"
+
+
+def render_first_sidebar() -> str:
+    inject_first_app_shell_css()
+
+    if "fp_active_page" not in st.session_state:
+        st.session_state["fp_active_page"] = "Genel Bakış"
+
+    active_page = st.session_state.get("fp_active_page", "Genel Bakış")
+
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="fp-shell-logo">
+                <div class="fp-shell-logo-main">FIRST</div>
+                <div class="fp-shell-logo-sub">ANALYTICS</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            """
+            <div class="fp-shell-status">
+                <strong>Fintech Alpha Pro</strong>
+                Kurumsal risk terminali
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"""
+            <div class="fp-active-page-pill">
+                <strong>{active_page}</strong>
+                Sol menüden analiz bölümleri arasında geçiş yapılır.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            '<div class="fp-shell-section-label">Analiz Menüsü</div>',
+            unsafe_allow_html=True,
+        )
+
+        for title, subtitle, icon in NAV_ITEMS:
+            is_active = title == active_page
+
+            clicked = st.button(
+                _nav_label(icon, title, is_active),
+                key=f"fp_nav_{title}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+            )
+
+            if clicked:
+                st.session_state["fp_active_page"] = title
+                return title
+
+        st.markdown(
+            """
+            <div class="fp-shell-plan">
+                <div class="fp-shell-plan-title">Pro Plan</div>
+                <div class="fp-shell-plan-sub">Premium</div>
+                <div class="fp-shell-plan-sub" style="margin-top:10px;">Kalan analiz hakkı</div>
+                <div class="fp-shell-plan-title" style="font-size:.96rem;">142 / 200</div>
+                <div class="fp-shell-progress"><div></div></div>
+                <div class="fp-shell-plan-btn">Planı Yönet</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    return st.session_state.get("fp_active_page", "Genel Bakış")
+
+
+def render_active_page_header(active_page: str) -> None:
+    subtitle = ""
+
+    for title, item_subtitle, _ in NAV_ITEMS:
+        if title == active_page:
+            subtitle = item_subtitle
+            break
+
+    st.markdown(
+        f"""
+        <div class="fp-shell-active-page">
+            <div class="fp-shell-active-title">{active_page}</div>
+            <div class="fp-shell-active-sub">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )

@@ -1,0 +1,276 @@
+"""
+Alt işlem menüsü.
+
+Bu sürüm:
+- Rapor İndir butonunu diğer butonlarla aynı premium stile yaklaştırır.
+- İzleme listesine eklenen varlıkları aynı bölümde görünür hale getirir.
+- HTML button yerine gerçek Streamlit button / download_button kullanır.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+import streamlit as st
+
+
+def _safe_rerun() -> None:
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+
+def _payload() -> dict[str, Any]:
+    data = st.session_state.get("last_analysis_payload") or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _pick(data: dict[str, Any], *keys: str, default: Any = "—") -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    return default
+
+
+def _build_report_filename() -> str:
+    payload = _payload()
+    symbol = str(
+        _pick(
+            payload,
+            "market_symbol",
+            "symbol",
+            "ticker",
+            "asset_symbol",
+            default="analysis",
+        )
+    )
+    symbol = symbol.replace("/", "-").replace("=", "").replace(" ", "_")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    return f"fintech_alpha_pro_{symbol}_{stamp}.pdf"
+
+
+def _current_watch_item() -> dict[str, Any]:
+    payload = _payload()
+
+    return {
+        "Varlık": _pick(
+            payload,
+            "asset_name",
+            "asset_label",
+            "selected_asset",
+            "varlik_adi",
+            "name",
+            default="Seçili varlık",
+        ),
+        "Sembol": _pick(
+            payload,
+            "market_symbol",
+            "symbol",
+            "ticker",
+            "asset_symbol",
+            default="—",
+        ),
+        "Vade": _pick(
+            payload,
+            "forecast_label",
+            "selected_horizon_label",
+            "horizon_label",
+            "projection_horizon",
+            "selected_horizon",
+            "forecast_days",
+            default="—",
+        ),
+        "Para Birimi": _pick(
+            payload,
+            "currency_symbol",
+            "display_currency",
+            "currency",
+            "base_currency",
+            default="—",
+        ),
+        "Eklenme": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def _add_to_watchlist() -> None:
+    item = _current_watch_item()
+
+    if item["Sembol"] == "—":
+        st.warning("İzleme listesine eklemek için önce analiz çalıştırılmalı.")
+        return
+
+    watchlist = list(st.session_state.get("watchlist", []))
+
+    already_exists = any(
+        str(row.get("Sembol")) == str(item["Sembol"]) and str(row.get("Vade")) == str(item["Vade"])
+        for row in watchlist
+        if isinstance(row, dict)
+    )
+
+    if already_exists:
+        st.info("Bu varlık aynı vadeyle zaten izleme listesinde.")
+        return
+
+    watchlist.append(item)
+    st.session_state["watchlist"] = watchlist
+    st.success("Varlık izleme listesine eklendi.")
+
+
+def _render_watchlist_panel() -> None:
+    watchlist = st.session_state.get("watchlist", [])
+
+    if not watchlist:
+        st.markdown(
+            """
+            <div class="fp-watchlist-empty">
+                İzleme listesi boş. Bir analiz yaptıktan sonra “İzleme Listesine Ekle” butonuyla varlık ekleyebilirsin.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    with st.expander(f"İzleme Listem · {len(watchlist)} varlık", expanded=False):
+        try:
+            from components.premium_ui import render_premium_table
+
+            render_premium_table(
+                watchlist,
+                title="İzleme Listesi",
+                subtitle="Eklediğin varlıklar burada görünür. Bu liste tarayıcı oturumu içinde saklanır.",
+            )
+        except Exception:
+            st.dataframe(watchlist, use_container_width=True, hide_index=True)
+
+        if st.button("İzleme Listesini Temizle", key="fp_clear_watchlist", use_container_width=True):
+            st.session_state["watchlist"] = []
+            st.success("İzleme listesi temizlendi.")
+            _safe_rerun()
+
+
+def _inject_footer_style() -> None:
+    st.markdown(
+        """
+        <style>
+        .fp-action-shell {
+            position: sticky;
+            bottom: 0;
+            z-index: 50;
+            padding: 12px 14px 14px 14px;
+            margin-top: 24px;
+            border: 1px solid rgba(56, 189, 248, 0.28);
+            border-radius: 20px;
+            background:
+                radial-gradient(circle at left, rgba(14, 165, 233, 0.20), transparent 34%),
+                linear-gradient(135deg, rgba(2, 6, 23, 0.97), rgba(15, 23, 42, 0.94));
+            box-shadow: 0 -16px 38px rgba(2, 6, 23, 0.42);
+        }
+
+        .fp-watchlist-empty {
+            margin: 8px 0 4px 0;
+            padding: 10px 12px;
+            border-radius: 14px;
+            color: rgba(226, 232, 240, 0.78);
+            background: rgba(15, 23, 42, 0.55);
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            font-size: 0.86rem;
+        }
+
+        div.stButton > button,
+        div.stDownloadButton > button {
+            min-height: 48px !important;
+            border-radius: 15px !important;
+            border: 1px solid rgba(56, 189, 248, 0.55) !important;
+            background:
+                radial-gradient(circle at left, rgba(125, 211, 252, 0.36), transparent 35%),
+                linear-gradient(135deg, #0ea5e9, #1d4ed8) !important;
+            color: #ffffff !important;
+            font-weight: 850 !important;
+            letter-spacing: 0.01em !important;
+            box-shadow: 0 12px 28px rgba(14, 165, 233, 0.22) !important;
+        }
+
+        div.stButton > button:hover,
+        div.stDownloadButton > button:hover {
+            border-color: rgba(125, 211, 252, 0.92) !important;
+            filter: brightness(1.08);
+            transform: translateY(-1px);
+        }
+
+        div.stButton > button:disabled,
+        div.stDownloadButton > button:disabled {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)) !important;
+            color: rgba(226, 232, 240, 0.45) !important;
+            border-color: rgba(148, 163, 184, 0.20) !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
+
+        div.stButton > button p,
+        div.stDownloadButton > button p {
+            color: inherit !important;
+            font-weight: inherit !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_action_footer() -> None:
+    """Alt işlem menüsünü çalışan, görünür ve tutarlı kontrollerle gösterir."""
+    _inject_footer_style()
+
+    st.markdown('<div class="fp-action-shell">', unsafe_allow_html=True)
+
+    col_refresh, col_watch, col_report, col_ai = st.columns([1, 1.25, 1.15, 1.25])
+
+    with col_refresh:
+        if st.button("Yenile", key="fp_refresh", use_container_width=True):
+            _safe_rerun()
+
+    with col_watch:
+        if st.button("İzleme Listesine Ekle", key="fp_watchlist_add", use_container_width=True):
+            _add_to_watchlist()
+
+    with col_report:
+        payload = st.session_state.get("last_analysis_payload")
+
+        if payload:
+            try:
+                from services.pdf_report_service import build_analysis_report_pdf
+
+                pdf_bytes = build_analysis_report_pdf(payload)
+
+                st.download_button(
+                    "Rapor İndir",
+                    data=pdf_bytes,
+                    file_name=_build_report_filename(),
+                    mime="application/pdf",
+                    type="primary",
+                    key="fp_download_report",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.button("Rapor İndir", key="fp_report_disabled_error", disabled=True, use_container_width=True)
+                st.caption(f"PDF hazırlanamadı: {exc}")
+        else:
+            st.button("Rapor İndir", key="fp_report_disabled_no_analysis", disabled=True, use_container_width=True)
+
+    with col_ai:
+        if st.button("AI Analiz Raporu", key="fp_ai_report", use_container_width=True):
+            if st.session_state.get("last_analysis_payload"):
+                st.session_state["show_ai_report_panel"] = True
+                st.success("AI analiz raporu hazırlandı. AI Haberler veya Analiz Sonuçları sekmesini kontrol et.")
+            else:
+                st.warning("Önce bir analiz çalıştırılmalı.")
+
+    _render_watchlist_panel()
+
+    st.markdown("</div>", unsafe_allow_html=True)

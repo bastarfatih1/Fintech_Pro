@@ -1,0 +1,513 @@
+from __future__ import annotations
+
+from typing import Any, Mapping, Optional
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+
+def _num(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        if value is None:
+            return default
+        n = float(value)
+        if pd.isna(n):
+            return default
+        return n
+    except Exception:
+        return default
+
+
+def _money(value: Any, symbol: str = "₺", decimals: Optional[int] = None) -> str:
+    n = _num(value)
+    if n is None:
+        return "Veri yok"
+
+    if decimals is None:
+        decimals = 4 if abs(n) < 100 else 2
+
+    s = f"{n:,.{decimals}f}"
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{s} {symbol}"
+
+
+def _pct(value: Any) -> str:
+    n = _num(value)
+    if n is None:
+        return "Veri yok"
+    sign = "+" if n > 0 else "-" if n < 0 else ""
+    return f"{sign}%{abs(n):.2f}".replace(".", ",")
+
+
+def _metric_delta(value: Any) -> str | None:
+    n = _num(value)
+    if n is None:
+        return None
+    return f"{n:+.2f}%"
+
+
+def _to_df(value: Any) -> pd.DataFrame:
+    try:
+        if isinstance(value, pd.DataFrame):
+            return value.copy()
+        if isinstance(value, (list, tuple, dict)):
+            return pd.DataFrame(value).copy()
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def _future_table(forecast_data: Mapping[str, Any]) -> pd.DataFrame:
+    if not isinstance(forecast_data, Mapping):
+        return pd.DataFrame()
+
+    keys = [
+        "gelecek_df",
+        "gelecek_tablo",
+        "gelecek_tablo_df",
+        "future_table",
+        "future_scenarios",
+        "senaryo_tablosu",
+    ]
+
+    for key in keys:
+        df = _to_df(forecast_data.get(key))
+        if not df.empty and "Vade" in df.columns:
+            return df
+
+    for value in forecast_data.values():
+        df = _to_df(value)
+        if not df.empty and "Vade" in df.columns:
+            return df
+
+    return pd.DataFrame()
+
+
+def _pick_future_row(forecast_data: Mapping[str, Any], selected_horizon: str | None) -> dict[str, Any]:
+    df = _future_table(forecast_data)
+
+    if df.empty:
+        return {}
+
+    candidates = []
+    if selected_horizon:
+        candidates.append(str(selected_horizon).strip())
+
+    candidates += ["1 Yıl", "6 Ay", "3 Ay", "1 Ay", "1 Hafta", "1 İşlem Günü"]
+
+    normalized = df["Vade"].astype(str).str.strip().str.casefold()
+
+    for label in candidates:
+        match = df[normalized == label.strip().casefold()]
+        if not match.empty:
+            return match.iloc[0].to_dict()
+
+    return df.iloc[-1].to_dict()
+
+
+def _days_from_horizon(label: str | None, fallback: int | None = None) -> int:
+    if fallback and fallback > 0:
+        return int(fallback)
+
+    text = str(label or "").casefold()
+
+    if "hafta" in text:
+        return 5
+    if "1 ay" in text:
+        return 21
+    if "3 ay" in text:
+        return 63
+    if "6 ay" in text:
+        return 126
+    if "1 yıl" in text or "1 yil" in text:
+        return 252
+    if "3 yıl" in text or "3 yil" in text:
+        return 756
+    if "5 yıl" in text or "5 yil" in text:
+        return 1260
+
+    return 252
+
+
+def _close_series(data: pd.DataFrame) -> pd.Series:
+    if data is None or data.empty or "Close" not in data.columns:
+        return pd.Series(dtype="float64")
+    return pd.to_numeric(data["Close"], errors="coerce").dropna()
+
+
+def _past_stats(
+    data: pd.DataFrame,
+    current_price: float,
+    investment_amount: float,
+    currency_rate: float,
+    horizon: str,
+    forecast_days: int | None,
+) -> dict[str, Any]:
+    close = _close_series(data)
+    current_native = _num(current_price)
+    invested = _num(investment_amount, 0.0) or 0.0
+    rate = _num(currency_rate, 1.0) or 1.0
+    days = _days_from_horizon(horizon, forecast_days)
+
+    out = {
+        "past_price": None,
+        "historical_return": None,
+        "same_position_past_value": None,
+        "past_investment_today_value": None,
+    }
+
+    if current_native is None or current_native <= 0 or len(close) <= days:
+        return out
+
+    past_native = _num(close.iloc[-(days + 1)])
+
+    if past_native is None or past_native <= 0:
+        return out
+
+    out["past_price"] = past_native * rate
+    out["historical_return"] = ((current_native / past_native) - 1.0) * 100.0
+
+    if invested > 0:
+        out["same_position_past_value"] = invested * past_native / current_native
+        out["past_investment_today_value"] = invested * current_native / past_native
+
+    return out
+
+
+def _history_rows(
+    data: pd.DataFrame,
+    current_price: float,
+    investment_amount: float,
+    currency_rate: float,
+    currency_symbol: str,
+) -> pd.DataFrame:
+    close = _close_series(data)
+    current_native = _num(current_price)
+    invested = _num(investment_amount, 0.0) or 0.0
+    rate = _num(currency_rate, 1.0) or 1.0
+
+    if current_native is None or current_native <= 0 or close.empty:
+        return pd.DataFrame()
+
+    rows = []
+
+    for label, days in [
+        ("1 Hafta", 5),
+        ("1 Ay", 21),
+        ("3 Ay", 63),
+        ("6 Ay", 126),
+        ("1 Yıl", 252),
+    ]:
+        if len(close) <= days:
+            continue
+
+        old_native = _num(close.iloc[-(days + 1)])
+        if old_native is None or old_native <= 0:
+            continue
+
+        ret = ((current_native / old_native) - 1.0) * 100.0
+        today_value = invested * current_native / old_native if invested > 0 else None
+
+        rows.append(
+            {
+                "Vade": label,
+                "Geçmiş Fiyat": _money(old_native * rate, currency_symbol),
+                "Bugünkü Karşılığı": _money(today_value, currency_symbol, 2),
+                "Getiri %": _pct(ret),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _model_count(row: Mapping[str, Any], forecast_data: Mapping[str, Any]) -> int | str:
+    direct = _num(row.get("Konsensüs Model Sayısı", row.get("Model Sayısı")))
+
+    if direct is not None:
+        return int(direct)
+
+    weights = forecast_data.get("model_agirliklari") if isinstance(forecast_data, Mapping) else None
+
+    if isinstance(weights, dict):
+        return len([v for v in weights.values() if (_num(v, 0.0) or 0.0) > 0])
+
+    return "—"
+
+
+def _consensus_chart(
+    data: pd.DataFrame,
+    current_price: float,
+    currency_rate: float,
+    forecast_data: Mapping[str, Any],
+    forecast_days: int | None,
+    currency_symbol: str,
+) -> go.Figure | None:
+    close = _close_series(data)
+
+    if close.empty:
+        return None
+
+    rate = _num(currency_rate, 1.0) or 1.0
+    current_display = (_num(current_price) or float(close.iloc[-1])) * rate
+
+    history = close.iloc[-252:] * rate
+    x_values = list(pd.to_datetime(history.index))
+    y_values = list(history.astype(float).values)
+
+    route = None
+
+    if isinstance(forecast_data, Mapping):
+        for key in ["konsensus_rota", "consensus_path"]:
+            value = forecast_data.get(key)
+            if value is None:
+                continue
+            try:
+                arr = np.asarray(value, dtype=float).flatten()
+                if arr.size:
+                    route = arr
+                    break
+            except Exception:
+                pass
+
+    if route is not None:
+        days = min(int(forecast_days or 252), len(route))
+        days = max(days, 1)
+        last_date = pd.Timestamp(x_values[-1])
+        future_dates = pd.bdate_range(last_date, periods=days + 1)[1:]
+
+        x_values += list(future_dates)
+        y_values += list(route[:days])
+
+    y = np.asarray(y_values, dtype=float)
+    x = pd.to_datetime(x_values)
+
+    above = np.where(y >= current_display, y, np.nan)
+    below = np.where(y < current_display, y, np.nan)
+    baseline = np.full_like(y, current_display)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=baseline,
+            mode="lines",
+            line=dict(color="rgba(226,232,240,0.55)", width=1, dash="dash"),
+            name=f"Güncel Fiyat ({_money(current_display, currency_symbol)})",
+            hoverinfo="skip",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=above,
+            mode="lines",
+            line=dict(color="#22c55e", width=2.2),
+            fill="tonexty",
+            fillcolor="rgba(34,197,94,0.20)",
+            name="Konsensüs > Güncel Fiyat",
+            connectgaps=False,
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=below,
+            mode="lines",
+            line=dict(color="#ef4444", width=2.2),
+            fill="tonexty",
+            fillcolor="rgba(239,68,68,0.20)",
+            name="Konsensüs < Güncel Fiyat",
+            connectgaps=False,
+        )
+    )
+
+    fig.update_layout(
+        height=390,
+        margin=dict(l=8, r=18, t=24, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(2,6,23,0.78)",
+        font=dict(color="#cbd5e1"),
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            y=1.04,
+            x=0.5,
+            xanchor="center",
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        xaxis=dict(
+            showgrid=True,
+            gridcolor="rgba(148,163,184,0.12)",
+            zeroline=False,
+            rangeselector=dict(
+                buttons=[
+                    dict(count=1, label="1A", step="month", stepmode="backward"),
+                    dict(count=3, label="3A", step="month", stepmode="backward"),
+                    dict(count=6, label="6A", step="month", stepmode="backward"),
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=2, label="2Y", step="year", stepmode="backward"),
+                    dict(step="all", label="Tümü"),
+                ],
+                bgcolor="rgba(15,23,42,0.88)",
+                activecolor="#2563eb",
+                font=dict(color="#e2e8f0", size=11),
+            ),
+        ),
+        yaxis=dict(
+            side="right",
+            showgrid=True,
+            gridcolor="rgba(148,163,184,0.12)",
+            zeroline=False,
+        ),
+    )
+
+    return fig
+
+
+def render_first_overview_panel(
+    data: pd.DataFrame,
+    asset_name: str,
+    market_symbol: str,
+    current_price: float,
+    investment_amount: float,
+    currency_rate: float,
+    currency_symbol: str,
+    forecast_data: Mapping[str, Any],
+    selected_horizon: Optional[str] = None,
+    forecast_days: Optional[int] = None,
+) -> None:
+    row = _pick_future_row(forecast_data, selected_horizon)
+
+    horizon = str(row.get("Vade") or selected_horizon or "Seçili vade")
+
+    rate = _num(currency_rate, 1.0) or 1.0
+    current_display = (_num(current_price, 0.0) or 0.0) * rate
+    invested = _num(investment_amount, 0.0) or 0.0
+
+    base_price = _num(row.get("Baz Senaryo", row.get("Tahmin")), current_display) or current_display
+    bad_price = _num(row.get("Kötümser Senaryo"), base_price) or base_price
+    good_price = _num(row.get("İyimser Senaryo"), base_price) or base_price
+
+    base_return = _num(
+        row.get("Nominal Getiri %"),
+        ((base_price / current_display) - 1.0) * 100.0 if current_display > 0 else 0.0,
+    ) or 0.0
+
+    bad_return = _num(
+        row.get("Kötümser Getiri %"),
+        ((bad_price / current_display) - 1.0) * 100.0 if current_display > 0 else 0.0,
+    ) or 0.0
+
+    good_return = _num(
+        row.get("İyimser Getiri %"),
+        ((good_price / current_display) - 1.0) * 100.0 if current_display > 0 else 0.0,
+    ) or 0.0
+
+    bad_capital = _num(row.get("Kötümser Sermaye"), invested * (1 + bad_return / 100.0))
+    base_capital = _num(row.get("Sermaye Karşılığı"), invested * (1 + base_return / 100.0))
+    good_capital = _num(row.get("İyimser Sermaye"), invested * (1 + good_return / 100.0))
+
+    past = _past_stats(
+        data=data,
+        current_price=current_price,
+        investment_amount=investment_amount,
+        currency_rate=currency_rate,
+        horizon=horizon,
+        forecast_days=forecast_days,
+    )
+
+    with st.container(border=True):
+        st.markdown("### Bu bölüm ne gösteriyor?")
+        st.caption(
+            f"Bu ekran seçili varlık için güncel fiyatı, {horizon} baz senaryoyu, geçmiş karşılaştırmayı ve model konsensüsünü özetler."
+        )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.metric("Güncel Fiyat", _money(current_display, currency_symbol), market_symbol)
+
+    with c2:
+        st.metric("Baz Senaryo", _money(base_price, currency_symbol), f"{horizon} hedef")
+
+    with c3:
+        st.metric("Olası Getiri", _pct(base_return), _metric_delta(base_return))
+
+    with c4:
+        st.metric("Konsensüse Giren Model", _model_count(row, forecast_data), "Aktif model")
+
+    st.markdown("### Mevcut yatırım ve geçmiş karşılaştırması")
+
+    h1, h2, h3, h4 = st.columns(4)
+
+    with h1:
+        st.metric("Yatırılan Sermaye", _money(invested, currency_symbol, 2))
+
+    with h2:
+        st.metric("Güncel Varlık Fiyatı", _money(current_display, currency_symbol))
+
+    with h3:
+        st.metric(f"{horizon} Önceki Fiyat", _money(past.get("past_price"), currency_symbol))
+
+    with h4:
+        st.metric("Geçmiş Getiri", _pct(past.get("historical_return")), _metric_delta(past.get("historical_return")))
+
+    st.info(
+        f"Bugünkü {_money(invested, currency_symbol, 2)} değerindeki aynı pozisyon, "
+        f"{horizon} önce yaklaşık {_money(past.get('same_position_past_value'), currency_symbol, 2)} değerindeydi. "
+        f"O tarihte {_money(invested, currency_symbol, 2)} yatırılsaydı bugünkü yaklaşık değeri "
+        f"{_money(past.get('past_investment_today_value'), currency_symbol, 2)} olurdu."
+    )
+
+    left, right = st.columns([1, 1.1])
+
+    with left:
+        st.markdown(f"### {horizon} gelecek yatırım tahmini")
+
+        s1, s2, s3 = st.columns(3)
+
+        with s1:
+            st.metric("Kötümser Senaryo", _money(bad_capital, currency_symbol, 2), _metric_delta(bad_return))
+
+        with s2:
+            st.metric("Baz Konsensüs Tahmini", _money(base_capital, currency_symbol, 2), _metric_delta(base_return))
+
+        with s3:
+            st.metric("İyimser Senaryo", _money(good_capital, currency_symbol, 2), _metric_delta(good_return))
+
+    with right:
+        st.markdown("### Geçmiş getiri özeti")
+        history_df = _history_rows(
+            data=data,
+            current_price=current_price,
+            investment_amount=investment_amount,
+            currency_rate=currency_rate,
+            currency_symbol=currency_symbol,
+        )
+
+        if history_df.empty:
+            st.info("Geçmiş getiri özeti için yeterli veri bulunamadı.")
+        else:
+            st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+    st.markdown("### Konsensüs Grafiği")
+    st.caption("Modellerin ortak tahmin görünümü")
+
+    fig = _consensus_chart(
+        data=data,
+        current_price=current_price,
+        currency_rate=currency_rate,
+        forecast_data=forecast_data,
+        forecast_days=forecast_days,
+        currency_symbol=currency_symbol,
+    )
+
+    if fig is None:
+        st.info("Konsensüs grafiği için yeterli veri bulunamadı.")
+    else:
+        st.plotly_chart(fig, use_container_width=True)

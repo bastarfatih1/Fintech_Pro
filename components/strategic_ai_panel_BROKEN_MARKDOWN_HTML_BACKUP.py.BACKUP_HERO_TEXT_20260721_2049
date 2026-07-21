@@ -1,0 +1,628 @@
+from __future__ import annotations
+
+import math
+import textwrap
+from typing import Any, Mapping, Optional
+
+import pandas as pd
+import streamlit as st
+
+
+def _html(markup: str) -> None:
+    """Indented multiline HTML'in Streamlit'te kod bloğu gibi görünmesini engeller."""
+    st.markdown(textwrap.dedent(markup).strip(), unsafe_allow_html=True)
+
+def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        if value is None:
+            return default
+
+        number = float(value)
+
+        if math.isnan(number) or math.isinf(number):
+            return default
+
+        return number
+
+    except Exception:
+        return default
+
+
+def _format_money(value: Any, symbol: str = "₺") -> str:
+    number = _safe_float(value)
+
+    if number is None:
+        return "veri yok"
+
+    text = f"{number:,.2f}"
+    text = text.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{text} {symbol}"
+
+
+def _format_percent(value: Any) -> str:
+    number = _safe_float(value)
+
+    if number is None:
+        return "veri yok"
+
+    sign = "+" if number > 0 else "-" if number < 0 else ""
+    arrow = "▲" if number > 0 else "▼" if number < 0 else "■"
+    text = f"{abs(number):.2f}".replace(".", ",")
+    return f"{arrow} {sign}%{text}"
+
+
+def _plain_percent(value: Any) -> str:
+    number = _safe_float(value)
+
+    if number is None:
+        return "veri yok"
+
+    sign = "+" if number > 0 else "-" if number < 0 else ""
+    text = f"{abs(number):.2f}".replace(".", ",")
+    return f"{sign}%{text}"
+
+
+def _clean_text(value: Any) -> str:
+    text = str(value or "").strip()
+
+    replacements = {
+        "OLLAMA": "",
+        "Ollama": "",
+        "ollama": "",
+        "OPENAI": "",
+        "OpenAI": "",
+        "GPT": "",
+        "POZİTİF": "olumlu eğilim",
+        "NEGATİF": "risk baskısı",
+        "NÖTR": "dengeli görünüm",
+        "AL": "yukarı yönlü sinyal",
+        "SAT": "aşağı yönlü risk",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return " ".join(text.split()).strip()
+
+
+def _future_table(forecast_data: Any) -> pd.DataFrame:
+    if isinstance(forecast_data, pd.DataFrame):
+        return forecast_data.copy()
+
+    if not isinstance(forecast_data, Mapping):
+        return pd.DataFrame()
+
+    keys = [
+        "gelecek_tablo",
+        "gelecek_df",
+        "future_table",
+        "forecast_table",
+        "senaryo_tablosu",
+        "scenario_table",
+    ]
+
+    for key in keys:
+        value = forecast_data.get(key)
+
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            return value.copy()
+
+    for value in forecast_data.values():
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            columns = set(map(str, value.columns))
+
+            if "Vade" in columns or "Sermaye Karşılığı" in columns or "Baz Senaryo" in columns:
+                return value.copy()
+
+    return pd.DataFrame()
+
+
+def _pick_selected_row(forecast_data: Any, selected_horizon_label: str) -> dict[str, Any]:
+    df = _future_table(forecast_data)
+
+    if df.empty:
+        return {}
+
+    if "Vade" in df.columns and selected_horizon_label:
+        target = str(selected_horizon_label).strip().casefold()
+
+        match = df[
+            df["Vade"]
+            .astype(str)
+            .str.strip()
+            .str.casefold()
+            .eq(target)
+        ]
+
+        if not match.empty:
+            return match.iloc[0].to_dict()
+
+    return df.iloc[-1].to_dict()
+
+
+def _get_value(row: Mapping[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row:
+            return row.get(name)
+
+    return None
+
+
+
+def _model_summary(forecast_data: Any) -> str:
+    if not isinstance(forecast_data, Mapping):
+        return (
+            "Model konsensüsü üretildi; ancak doğrulama ve ağırlık detayları sınırlı olduğu için "
+            "sonuç temkinli okunmalıdır."
+        )
+
+    active_model_count = 0
+
+    weights = forecast_data.get("model_agirliklari")
+    if weights is None:
+        weights = forecast_data.get("model_weights")
+    if weights is None:
+        weights = {}
+
+    if isinstance(weights, Mapping):
+        for value in weights.values():
+            if (_safe_float(value, 0.0) or 0.0) > 0:
+                active_model_count += 1
+
+    backtest_df = forecast_data.get("backtest_df")
+    if backtest_df is None:
+        backtest_df = forecast_data.get("test_df")
+
+    test_sentence = ""
+
+    if isinstance(backtest_df, pd.DataFrame) and not backtest_df.empty:
+        total = len(backtest_df)
+        passed = None
+
+        if "Başarılı mı?" in backtest_df.columns:
+            passed = int(backtest_df["Başarılı mı?"].astype(bool).sum())
+
+        elif "Durum" in backtest_df.columns:
+            passed = int(
+                backtest_df["Durum"]
+                .astype(str)
+                .str.contains("başar|success|geçti", case=False, regex=True)
+                .sum()
+            )
+
+        if passed is not None:
+            test_sentence = f" Test ve backtest tarafında {passed}/{total} kontrol olumlu görünmektedir."
+
+    if active_model_count:
+        return (
+            f"Konsensüs hesaplamasına {active_model_count} aktif model katkı vermektedir."
+            f"{test_sentence} Model sonucu tek başına kesin fiyat tahmini değil, senaryo bazlı karar destek çıktısıdır."
+        )
+
+    return (
+        "Model tarafında senaryo üretimi yapılmış olsa da aktif model ağırlıkları sınırlı okunmaktadır."
+        f"{test_sentence} Bu nedenle sonuç, haber akışı ve risk aralığıyla birlikte değerlendirilmelidir."
+    )
+
+def _direction_text(base_return: Optional[float]) -> str:
+    if base_return is None:
+        return "belirgin yön verisi üretmemektedir"
+
+    if base_return > 3:
+        return "yukarı yönlü beklentiyi desteklemektedir"
+
+    if base_return < -3:
+        return "aşağı yönlü risk baskısına işaret etmektedir"
+
+    return "dengeli ve sınırlı yön beklentisi üretmektedir"
+
+
+def _tone_label(base_return: Optional[float]) -> str:
+    if base_return is None:
+        return "Dengeli görünüm"
+
+    if base_return > 3:
+        return "Olumlu eğilim"
+
+    if base_return < -3:
+        return "Risk baskısı"
+
+    return "Dengeli görünüm"
+
+
+def _tone_class(value: Optional[float]) -> str:
+    if value is None:
+        return "fp-ai-neutral"
+
+    if value > 0:
+        return "fp-ai-positive"
+
+    if value < 0:
+        return "fp-ai-negative"
+
+    return "fp-ai-neutral"
+
+
+def _inject_style() -> None:
+    st.markdown(
+        """
+        <style>
+        .fp-ai-top-shell {
+            width: 100%;
+            border-radius: 24px;
+            padding: 22px;
+            margin: 10px 0 14px 0;
+            background:
+                radial-gradient(circle at 0% 0%, rgba(56,189,248,0.18), transparent 34%),
+                radial-gradient(circle at 100% 0%, rgba(34,197,94,0.12), transparent 34%),
+                linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98));
+            border: 1px solid rgba(56,189,248,0.28);
+            box-shadow: 0 22px 60px rgba(0,0,0,0.34);
+        }
+
+        .fp-ai-kicker {
+            color: #93c5fd;
+            font-size: 12px;
+            font-weight: 950;
+            letter-spacing: 0.10em;
+            text-transform: uppercase;
+            margin-bottom: 7px;
+        }
+
+        .fp-ai-title {
+            color: #ffffff;
+            font-size: 27px;
+            font-weight: 950;
+            letter-spacing: -0.035em;
+            line-height: 1.15;
+            margin-bottom: 8px;
+        }
+
+        .fp-ai-subtitle {
+            color: #dbeafe;
+            font-size: 14px;
+            font-weight: 650;
+            line-height: 1.65;
+            max-width: 980px;
+        }
+
+        .fp-ai-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 13px;
+            margin-top: 20px;
+        }
+
+        .fp-ai-metric {
+            border-radius: 18px;
+            padding: 15px 15px 14px 15px;
+            background: linear-gradient(180deg, rgba(30,41,59,0.88), rgba(15,23,42,0.96));
+            border: 1px solid rgba(148,163,184,0.18);
+            min-height: 116px;
+        }
+
+        .fp-ai-metric-label {
+            color: #bfdbfe;
+            font-size: 11px;
+            font-weight: 950;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 9px;
+        }
+
+        .fp-ai-metric-value {
+            color: #ffffff;
+            font-size: 23px;
+            font-weight: 950;
+            line-height: 1.16;
+            letter-spacing: -0.03em;
+            word-break: break-word;
+        }
+
+        .fp-ai-metric-sub {
+            color: #cbd5e1;
+            font-size: 12.5px;
+            font-weight: 650;
+            line-height: 1.45;
+            margin-top: 8px;
+        }
+
+        .fp-ai-positive {
+            color: #86efac !important;
+        }
+
+        .fp-ai-negative {
+            color: #fca5a5 !important;
+        }
+
+        .fp-ai-neutral {
+            color: #fde68a !important;
+        }
+
+        .fp-ai-inner-title {
+            color: #ffffff;
+            font-size: 20px;
+            font-weight: 950;
+            letter-spacing: -0.02em;
+            margin-bottom: 4px;
+        }
+
+        .fp-ai-inner-subtitle {
+            color: #cbd5e1;
+            font-size: 13px;
+            font-weight: 650;
+            line-height: 1.55;
+            margin-bottom: 12px;
+        }
+
+        div[data-testid="stExpander"] {
+            border-radius: 17px !important;
+            border: 1px solid rgba(56,189,248,0.24) !important;
+            background: rgba(15,23,42,0.72) !important;
+            overflow: hidden !important;
+            margin-bottom: 10px !important;
+        }
+
+        div[data-testid="stExpander"] summary {
+            color: #ffffff !important;
+            font-size: 15.5px !important;
+            font-weight: 950 !important;
+        }
+
+        div[data-testid="stExpander"] p,
+        div[data-testid="stExpander"] li {
+            color: #e2e8f0 !important;
+            font-size: 14.5px !important;
+            line-height: 1.72 !important;
+            font-weight: 600 !important;
+        }
+
+        div[data-testid="stExpander"] strong {
+            color: #ffffff !important;
+            font-weight: 950 !important;
+        }
+
+        @media (max-width: 1250px) {
+            .fp-ai-metrics-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 800px) {
+            .fp-ai-metrics-grid {
+                grid-template-columns: repeat(1, minmax(0, 1fr));
+            }
+
+            .fp-ai-title {
+                font-size: 23px;
+            }
+        }
+        </style>
+    """)
+
+
+def render_strategic_ai_panel(
+    *,
+    ai_bundle: Optional[Mapping[str, Any]] = None,
+    forecast_data: Optional[Mapping[str, Any]] = None,
+    investment_amount: Any = None,
+    current_price: Any = None,
+    currency_rate: Any = 1.0,
+    currency_symbol: str = "₺",
+    asset_name: str = "Seçili varlık",
+    selected_horizon_label: str = "Seçili vade",
+) -> None:
+    _inject_style()
+
+    if isinstance(ai_bundle, Mapping):
+        ai_bundle = dict(ai_bundle)
+    else:
+        ai_bundle = {}
+
+    if isinstance(forecast_data, Mapping):
+        forecast_data = dict(forecast_data)
+    else:
+        forecast_data = {}
+
+    selected_row = _pick_selected_row(forecast_data, selected_horizon_label)
+
+    invested = _safe_float(investment_amount)
+    current_native = _safe_float(current_price)
+    rate = _safe_float(currency_rate, 1.0) or 1.0
+    current_display = current_native * rate if current_native is not None else None
+
+    base_price = _safe_float(_get_value(selected_row, "Baz Senaryo", "Tahmin", "Base Scenario"))
+    bad_price = _safe_float(_get_value(selected_row, "Kötümser Senaryo", "Pessimistic Scenario"))
+    good_price = _safe_float(_get_value(selected_row, "İyimser Senaryo", "Optimistic Scenario"))
+
+    base_return = _safe_float(_get_value(selected_row, "Nominal Getiri %", "Baz Getiri %", "Getiri %"))
+    bad_return = _safe_float(_get_value(selected_row, "Kötümser Getiri %"))
+    good_return = _safe_float(_get_value(selected_row, "İyimser Getiri %"))
+
+    base_capital = _safe_float(_get_value(selected_row, "Sermaye Karşılığı", "Baz Sermaye"))
+    bad_capital = _safe_float(_get_value(selected_row, "Kötümser Sermaye"))
+    good_capital = _safe_float(_get_value(selected_row, "İyimser Sermaye"))
+
+    if invested is not None:
+        if base_capital is None and base_return is not None:
+            base_capital = invested * (1 + base_return / 100.0)
+
+        if bad_capital is None and bad_return is not None:
+            bad_capital = invested * (1 + bad_return / 100.0)
+
+        if good_capital is None and good_return is not None:
+            good_capital = invested * (1 + good_return / 100.0)
+
+    if base_return is None and current_display and base_price:
+        base_return = ((base_price / current_display) - 1.0) * 100.0
+
+    if bad_return is None and current_display and bad_price:
+        bad_return = ((bad_price / current_display) - 1.0) * 100.0
+
+    if good_return is None and current_display and good_price:
+        good_return = ((good_price / current_display) - 1.0) * 100.0
+
+    base_gain = base_capital - invested if base_capital is not None and invested is not None else None
+    bad_gain = bad_capital - invested if bad_capital is not None and invested is not None else None
+    good_gain = good_capital - invested if good_capital is not None and invested is not None else None
+
+    technical_summary = _clean_text(ai_bundle.get("technical_summary", ""))
+    market_synthesis = _clean_text(ai_bundle.get("market_synthesis", ""))
+    risk_note = _clean_text(ai_bundle.get("risk_note", ""))
+    news_effect_summary = _clean_text(ai_bundle.get("news_effect_summary", ""))
+
+    model_text = _model_summary(forecast_data)
+    tone_label = _tone_label(base_return)
+    direction_text = _direction_text(base_return)
+
+    intro_text = (
+        market_synthesis
+        or technical_summary
+        or (
+            "Haber akışı ve teknik görünüm birlikte değerlendirildiğinde sonuçlar "
+            "model konsensüsü ve seçili vade üzerinden yorumlanmalıdır."
+        )
+    )
+
+    opportunity_text = (
+        f"Seçilen {selected_horizon_label} vadede baz senaryo {direction_text}. "
+        f"{_format_money(invested, currency_symbol)} yatırım için baz senaryo sonucu "
+        f"{_format_money(base_capital, currency_symbol)} sermaye karşılığı ve "
+        f"{_format_money(base_gain, currency_symbol)} nominal fark üretmektedir. "
+        f"İyimser senaryoda sermaye {_format_money(good_capital, currency_symbol)} seviyesine çıkabilir."
+    )
+
+    risk_text = (
+        risk_note
+        or (
+            f"Kötümser senaryoda sermaye {_format_money(bad_capital, currency_symbol)} seviyesine "
+            f"gerileyebilir ve yaklaşık {_format_money(bad_gain, currency_symbol)} sonuç oluşabilir. "
+            "Senaryolar arasındaki fark büyüdükçe belirsizlik ve oynaklık riski artar."
+        )
+    )
+
+    _html(f"""
+        <div class="fp-ai-top-shell">
+            <div class="fp-ai-kicker">Yapay Zekâ Stratejik Yorum</div>
+            <div class="fp-ai-title">{asset_name} · Premium Analiz Merkezi</div>
+            <div class="fp-ai-subtitle">
+                Seçili vade, yatırım tutarı, haber etkisi, model konsensüsü ve senaryo sonuçları
+                tek merkezde profesyonel biçimde özetlenir.
+            </div>
+
+            <div class="fp-ai-metrics-grid">
+                <div class="fp-ai-metric">
+                    <div class="fp-ai-metric-label">Genel Görünüm</div>
+                    <div class="fp-ai-metric-value {_tone_class(base_return)}">{tone_label}</div>
+                    <div class="fp-ai-metric-sub">Model yönü: {_plain_percent(base_return)}</div>
+                </div>
+
+                <div class="fp-ai-metric">
+                    <div class="fp-ai-metric-label">Seçili Vade</div>
+                    <div class="fp-ai-metric-value">{selected_horizon_label}</div>
+                    <div class="fp-ai-metric-sub">Vade bazlı yorum ve sermaye sonucu</div>
+                </div>
+
+                <div class="fp-ai-metric">
+                    <div class="fp-ai-metric-label">Baz Hedef</div>
+                    <div class="fp-ai-metric-value">{_format_money(base_price, currency_symbol)}</div>
+                    <div class="fp-ai-metric-sub">Güncel fiyat: {_format_money(current_display, currency_symbol)}</div>
+                </div>
+
+                <div class="fp-ai-metric">
+                    <div class="fp-ai-metric-label">Beklenen Getiri</div>
+                    <div class="fp-ai-metric-value {_tone_class(base_return)}">{_format_percent(base_return)}</div>
+                    <div class="fp-ai-metric-sub">Kötümser {_plain_percent(bad_return)} · İyimser {_plain_percent(good_return)}</div>
+                </div>
+
+                <div class="fp-ai-metric">
+                    <div class="fp-ai-metric-label">Tahmini Sermaye</div>
+                    <div class="fp-ai-metric-value">{_format_money(base_capital, currency_symbol)}</div>
+                    <div class="fp-ai-metric-sub">Baz fark: {_format_money(base_gain, currency_symbol)}</div>
+                </div>
+            </div>
+        </div>
+    """)
+
+    with st.container(border=True):
+        st.markdown('<div class="fp-ai-inner-title">Detaylı Yapay Zekâ Yorumu</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="fp-ai-inner-subtitle">Aşağıdaki başlıklar tek analiz kutusu içinde açılır/kapanır şekilde düzenlenmiştir.</div>',
+            unsafe_allow_html=True,
+        )
+
+        with st.expander("Genel stratejik yorum", expanded=True):
+            st.markdown(
+                f"""
+{asset_name} için genel görünüm **{tone_label}** olarak okunmaktadır. Seçilen **{selected_horizon_label}**
+vadede baz senaryo **{_format_percent(base_return)}** getiri üretmektedir. Bu sonuç, modelin mevcut veri seti
+üzerinden **{direction_text}** anlamına gelir.
+
+Yatırım tutarı **{_format_money(invested, currency_symbol)}** olduğunda baz senaryoda sermaye yaklaşık
+**{_format_money(base_capital, currency_symbol)}** seviyesine ulaşır. Bu da yaklaşık
+**{_format_money(base_gain, currency_symbol)}** nominal fark anlamına gelir.
+                """
+            )
+
+        with st.expander("Haberlerin genel yorumu", expanded=False):
+            st.markdown(news_effect_summary or intro_text)
+
+        with st.expander("Model ve konsensüs yorumu", expanded=False):
+            st.markdown(model_text)
+
+        with st.expander("Yatırım tutarına göre senaryo sonucu", expanded=False):
+            st.markdown(
+                f"""
+Seçilen yatırım tutarı: **{_format_money(invested, currency_symbol)}**
+
+**Kötümser senaryo:** Sermaye yaklaşık **{_format_money(bad_capital, currency_symbol)}** seviyesine gerileyebilir.
+Bu durumda sonuç **{_format_money(bad_gain, currency_symbol)}** ve getiri **{_format_percent(bad_return)}** olur.
+
+**Baz senaryo:** Sermaye yaklaşık **{_format_money(base_capital, currency_symbol)}** seviyesine ulaşabilir.
+Bu durumda sonuç **{_format_money(base_gain, currency_symbol)}** ve getiri **{_format_percent(base_return)}** olur.
+
+**İyimser senaryo:** Sermaye yaklaşık **{_format_money(good_capital, currency_symbol)}** seviyesine çıkabilir.
+Bu durumda sonuç **{_format_money(good_gain, currency_symbol)}** ve getiri **{_format_percent(good_return)}** olur.
+                """
+            )
+
+        with st.expander("Neden artabilir?", expanded=False):
+            st.markdown(
+                f"""
+Fiyatın artmasını destekleyebilecek ana nedenler şunlardır:
+
+- Baz senaryonun seçili vadede **{_format_percent(base_return)}** getiri üretmesi.
+- Haber akışında sert negatif baskının öne çıkmaması.
+- Model konsensüsünün seçili vade için ölçülebilir senaryo üretmesi.
+- İyimser senaryoda sermayenin **{_format_money(good_capital, currency_symbol)}** seviyesine kadar çıkabilmesi.
+
+{opportunity_text}
+                """
+            )
+
+        with st.expander("Neden azalabilir?", expanded=False):
+            st.markdown(
+                f"""
+Fiyatın azalmasına veya baz senaryodan sapmasına neden olabilecek ana riskler şunlardır:
+
+- Kötümser senaryoda getiri **{_format_percent(bad_return)}** seviyesine gerileyebilir.
+- Senaryolar arası fark yüksekse oynaklık riski artar.
+- Dış haber akışı, likidite, makro veri veya piyasa koşulları modeli aşağı yönlü bozabilir.
+- Geçmiş performans gelecekte aynı sonucun oluşacağını garanti etmez.
+
+{risk_text}
+                """
+            )
+
+        with st.expander("Sonuç ve karar destek özeti", expanded=False):
+            st.markdown(
+                f"""
+Sonuç olarak **{asset_name}** için seçilen **{selected_horizon_label}** vadede baz senaryo
+**{_format_percent(base_return)}** performans üretmektedir. **{_format_money(invested, currency_symbol)}**
+yatırım tutarı baz alındığında tahmini sermaye **{_format_money(base_capital, currency_symbol)}**
+seviyesine ulaşır.
+
+Bu analiz; haber etkisi, model konsensüsü, test/backtest durumu, risk aralığı ve yatırım tutarı bazlı
+sermaye sonucunu birlikte yorumlar. Çıktılar karar destek amaçlıdır, yatırım tavsiyesi değildir.
+                """
+            )

@@ -1,0 +1,652 @@
+"""Alt işlem menüsü ve ayrıntılı izleme listesi."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from html import escape
+from textwrap import dedent
+from typing import Any
+
+import streamlit as st
+
+
+def _safe_float(value: Any, default: float | None = None) -> float | None:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _money(value: Any, symbol: str) -> str:
+    numeric = _safe_float(value)
+
+    if numeric is None:
+        return "Veri yok"
+
+    formatted = f"{numeric:,.2f}"
+    formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+
+    return f"{formatted} {symbol}"
+
+
+def _price(value: Any, symbol: str) -> str:
+    return _money(value, symbol)
+
+
+def _percent(value: Any) -> str:
+    numeric = _safe_float(value)
+
+    if numeric is None:
+        return "Veri yok"
+
+    sign = "+" if numeric > 0 else ""
+    formatted = f"{sign}{numeric:.2f}".replace(".", ",")
+
+    return f"%{formatted}"
+
+
+def _safe_rerun() -> None:
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+
+def _payload() -> dict[str, Any]:
+    payload = st.session_state.get("last_analysis_payload") or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _build_report_filename() -> str:
+    payload = _payload()
+
+    symbol = str(
+        payload.get("market_symbol", "analysis")
+    ).replace("/", "-").replace("=", "").replace(" ", "_")
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+    return f"fintech_alpha_pro_{symbol}_{stamp}.pdf"
+
+
+def _build_watchlist_item() -> dict[str, Any] | None:
+    payload = _payload()
+
+    symbol = str(payload.get("market_symbol") or "").strip()
+
+    if not symbol:
+        return None
+
+    snapshot = payload.get("watchlist_snapshot") or {}
+
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+
+    currency_symbol = str(
+        payload.get("currency_symbol") or "₺"
+    )
+
+    horizon = str(
+        snapshot.get("selected_horizon")
+        or payload.get("forecast_label")
+        or "Seçili vade"
+    )
+
+    return {
+        "record_key": (
+            f"{symbol}|{horizon}|{currency_symbol}"
+        ),
+        "asset_name": str(
+            payload.get("asset_name") or "Seçili varlık"
+        ),
+        "market_symbol": symbol,
+        "currency_symbol": currency_symbol,
+        "selected_horizon": horizon,
+        "forecast_days": snapshot.get(
+            "forecast_days",
+            payload.get("forecast_days"),
+        ),
+        "invested_capital": snapshot.get(
+            "invested_capital",
+            payload.get("investment_amount"),
+        ),
+        "current_price": snapshot.get("current_price"),
+        "past_price": snapshot.get("past_price"),
+        "same_position_past_value": snapshot.get(
+            "same_position_past_value"
+        ),
+        "past_investment_today_value": snapshot.get(
+            "past_investment_today_value"
+        ),
+        "historical_return_percent": snapshot.get(
+            "historical_return_percent"
+        ),
+        "future_pessimistic_capital": snapshot.get(
+            "future_pessimistic_capital"
+        ),
+        "future_base_capital": snapshot.get(
+            "future_base_capital"
+        ),
+        "future_optimistic_capital": snapshot.get(
+            "future_optimistic_capital"
+        ),
+        "future_base_return_percent": snapshot.get(
+            "future_base_return_percent"
+        ),
+        "updated_at": datetime.now().strftime(
+            "%d.%m.%Y %H:%M"
+        ),
+    }
+
+
+def _add_or_update_watchlist() -> None:
+    item = _build_watchlist_item()
+
+    if item is None:
+        st.warning(
+            "İzleme listesine eklemek için önce analiz çalıştırılmalı."
+        )
+        return
+
+    watchlist = list(st.session_state.get("watchlist", []))
+    record_key = item["record_key"]
+
+    updated = False
+    cleaned_watchlist = []
+
+    for existing in watchlist:
+        if not isinstance(existing, dict):
+            continue
+
+        if existing.get("record_key") == record_key:
+            cleaned_watchlist.append(item)
+            updated = True
+        else:
+            cleaned_watchlist.append(existing)
+
+    if not updated:
+        cleaned_watchlist.append(item)
+
+    st.session_state["watchlist"] = cleaned_watchlist
+
+    if updated:
+        st.success(
+            "İzleme listesindeki yatırım özeti güncellendi."
+        )
+    else:
+        st.success(
+            "Varlık ve yatırım senaryosu izleme listesine eklendi."
+        )
+
+
+def _remove_watchlist_item(record_key: str) -> None:
+    watchlist = st.session_state.get("watchlist", [])
+
+    st.session_state["watchlist"] = [
+        item
+        for item in watchlist
+        if isinstance(item, dict)
+        and item.get("record_key") != record_key
+    ]
+
+    _safe_rerun()
+
+
+
+def _render_watchlist_card(item: dict[str, Any], index: int) -> None:
+    asset_name = str(item.get("asset_name") or "Seçili varlık")
+    symbol = str(item.get("market_symbol") or "—")
+    horizon = str(item.get("selected_horizon") or "—")
+    currency = str(item.get("currency_symbol") or "₺")
+    updated_at = str(item.get("updated_at") or "—")
+
+    invested = _money(item.get("invested_capital"), currency)
+    current_price = _price(item.get("current_price"), currency)
+    past_price = _price(item.get("past_price"), currency)
+
+    past_position = _money(
+        item.get("same_position_past_value"),
+        currency,
+    )
+    past_investment_today = _money(
+        item.get("past_investment_today_value"),
+        currency,
+    )
+
+    historical_return = _percent(
+        item.get("historical_return_percent")
+    )
+
+    future_bad = _money(
+        item.get("future_pessimistic_capital"),
+        currency,
+    )
+    future_base = _money(
+        item.get("future_base_capital"),
+        currency,
+    )
+    future_good = _money(
+        item.get("future_optimistic_capital"),
+        currency,
+    )
+    future_return = _percent(
+        item.get("future_base_return_percent")
+    )
+
+    with st.container(border=True):
+        top_left, top_right = st.columns([3, 1])
+
+        with top_left:
+            st.markdown(f"### {asset_name}")
+            st.caption(f"{symbol} · Seçilen vade: {horizon}")
+
+        with top_right:
+            st.caption("Son güncelleme")
+            st.markdown(f"**{updated_at}**")
+
+        st.markdown("#### Mevcut yatırım ve geçmiş karşılaştırması")
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        with c1:
+            st.metric("Yatırılan Sermaye", invested)
+
+        with c2:
+            st.metric("Güncel Varlık Fiyatı", current_price)
+
+        with c3:
+            st.metric(f"{horizon} Önceki Fiyat", past_price)
+
+        with c4:
+            st.metric("Geçmiş Getiri", historical_return)
+
+        st.info(
+            f"Bugünkü {invested} değerindeki aynı pozisyon, "
+            f"{horizon} önce yaklaşık {past_position} değerindeydi. "
+            f"O tarihte {invested} yatırılsaydı bugünkü yaklaşık değeri "
+            f"{past_investment_today} olurdu."
+        )
+
+        st.markdown(f"#### {horizon} gelecek yatırım tahmini")
+
+        s1, s2, s3 = st.columns(3)
+
+        with s1:
+            st.metric("Kötümser Senaryo", future_bad)
+
+        with s2:
+            st.metric(
+                "Baz Konsensüs Tahmini",
+                future_base,
+                delta=future_return,
+            )
+
+        with s3:
+            st.metric("İyimser Senaryo", future_good)
+
+        remove_col, _ = st.columns([1, 3])
+
+        with remove_col:
+            if st.button(
+                "Kaydı Sil",
+                key=f"fp_remove_watch_{index}_{item.get('record_key')}",
+                use_container_width=True,
+            ):
+                _remove_watchlist_item(
+                    str(item.get("record_key"))
+                )
+
+
+def _render_watchlist_panel() -> None:
+    watchlist = [
+        item
+        for item in st.session_state.get("watchlist", [])
+        if isinstance(item, dict)
+    ]
+
+    if not watchlist:
+        st.markdown(
+            """
+            <div class="fp-watch-empty">
+                İzleme listesi boş. Analiz yaptıktan sonra seçili
+                varlığı yatırım senaryosuyla birlikte ekleyebilirsin.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    with st.expander(
+        f"İzleme Listem · {len(watchlist)} yatırım senaryosu",
+        expanded=True,
+    ):
+        for index, item in enumerate(watchlist):
+            _render_watchlist_card(item, index)
+
+        st.divider()
+
+        if st.button(
+            "İzleme Listesinin Tamamını Temizle",
+            key="fp_clear_watchlist",
+            use_container_width=True,
+        ):
+            st.session_state["watchlist"] = []
+            _safe_rerun()
+
+
+def _inject_footer_style() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stButton"] button,
+        [data-testid="stDownloadButton"] button,
+        div.stButton > button,
+        div.stDownloadButton > button {
+            width: 100% !important;
+            min-height: 54px !important;
+            border-radius: 16px !important;
+            border: 1px solid rgba(125, 211, 252, 0.72) !important;
+            background:
+                radial-gradient(
+                    circle at 16% 50%,
+                    rgba(186, 230, 253, 0.42),
+                    transparent 22%
+                ),
+                linear-gradient(
+                    135deg,
+                    #38bdf8 0%,
+                    #2563eb 52%,
+                    #1d4ed8 100%
+                ) !important;
+            color: #ffffff !important;
+            font-size: 0.95rem !important;
+            font-weight: 900 !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.18),
+                0 14px 30px rgba(37, 99, 235, 0.28) !important;
+        }
+
+        [data-testid="stButton"] button:hover,
+        [data-testid="stDownloadButton"] button:hover {
+            filter: brightness(1.08) !important;
+            transform: translateY(-1px) !important;
+        }
+
+        [data-baseweb="tab-list"] {
+            gap: 12px !important;
+            padding: 10px 0 16px 0 !important;
+            overflow-x: auto !important;
+        }
+
+        [data-baseweb="tab"] {
+            min-height: 50px !important;
+            padding: 0 22px !important;
+            border-radius: 16px !important;
+            border: 1px solid rgba(56, 189, 248, 0.34) !important;
+            background: linear-gradient(
+                135deg,
+                rgba(15, 23, 42, 0.96),
+                rgba(30, 41, 59, 0.88)
+            ) !important;
+            font-weight: 850 !important;
+        }
+
+        [data-baseweb="tab"] p {
+            font-size: 0.93rem !important;
+            font-weight: 850 !important;
+            white-space: nowrap !important;
+        }
+
+        [data-baseweb="tab"][aria-selected="true"] {
+            border-color: rgba(125, 211, 252, 0.90) !important;
+            background: linear-gradient(
+                135deg,
+                #0ea5e9,
+                #2563eb,
+                #1e40af
+            ) !important;
+        }
+
+        [data-baseweb="tab-highlight"] {
+            display: none !important;
+        }
+
+        .fp-watch-empty {
+            margin: 14px 0;
+            padding: 16px 18px;
+            border-radius: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(15, 23, 42, 0.62);
+            color: rgba(226, 232, 240, 0.76);
+        }
+
+        .fp-watch-card {
+            padding: 20px;
+            margin: 12px 0 8px 0;
+            border-radius: 20px;
+            border: 1px solid rgba(56, 189, 248, 0.28);
+            background:
+                radial-gradient(
+                    circle at 0% 0%,
+                    rgba(14, 165, 233, 0.18),
+                    transparent 35%
+                ),
+                linear-gradient(
+                    135deg,
+                    rgba(2, 6, 23, 0.98),
+                    rgba(15, 23, 42, 0.96)
+                );
+            box-shadow: 0 18px 42px rgba(2, 6, 23, 0.32);
+        }
+
+        .fp-watch-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: flex-start;
+            padding-bottom: 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        }
+
+        .fp-watch-title {
+            color: #f8fafc;
+            font-size: 1.08rem;
+            font-weight: 900;
+        }
+
+        .fp-watch-subtitle,
+        .fp-watch-date {
+            color: rgba(203, 213, 225, 0.76);
+            font-size: 0.82rem;
+            margin-top: 4px;
+        }
+
+        .fp-watch-date {
+            text-align: right;
+        }
+
+        .fp-watch-section-title {
+            margin: 18px 0 10px 0;
+            color: #bae6fd;
+            font-size: 0.84rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .fp-watch-grid {
+            display: grid;
+            gap: 10px;
+        }
+
+        .fp-watch-grid-four {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .fp-watch-grid-three {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .fp-watch-metric,
+        .fp-watch-scenario {
+            min-height: 88px;
+            padding: 13px 14px;
+            border-radius: 15px;
+            background: rgba(15, 23, 42, 0.70);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+        }
+
+        .fp-watch-metric span,
+        .fp-watch-scenario span {
+            display: block;
+            color: rgba(203, 213, 225, 0.70);
+            font-size: 0.76rem;
+            margin-bottom: 8px;
+        }
+
+        .fp-watch-metric strong,
+        .fp-watch-scenario strong {
+            display: block;
+            color: #f8fafc;
+            font-size: 1rem;
+            font-weight: 900;
+        }
+
+        .fp-watch-scenario small {
+            display: block;
+            margin-top: 6px;
+            color: rgba(226, 232, 240, 0.66);
+        }
+
+        .fp-watch-negative {
+            border-color: rgba(248, 113, 113, 0.32);
+        }
+
+        .fp-watch-base {
+            border-color: rgba(56, 189, 248, 0.44);
+        }
+
+        .fp-watch-positive {
+            border-color: rgba(74, 222, 128, 0.32);
+        }
+
+        .fp-watch-history-note {
+            margin-top: 10px;
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: rgba(30, 41, 59, 0.58);
+            color: rgba(226, 232, 240, 0.82);
+            font-size: 0.82rem;
+            line-height: 1.55;
+        }
+
+        @media (max-width: 900px) {
+            .fp-watch-grid-four,
+            .fp-watch-grid-three {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .fp-watch-grid-four,
+            .fp-watch-grid-three {
+                grid-template-columns: 1fr;
+            }
+
+            .fp-watch-header {
+                display: block;
+            }
+
+            .fp-watch-date {
+                margin-top: 8px;
+                text-align: left;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_action_footer() -> None:
+    """Alt menü ve ayrıntılı yatırım izleme listesini gösterir."""
+    _inject_footer_style()
+
+    col_refresh, col_watch, col_report, col_ai = st.columns(
+        [1, 1.25, 1.1, 1.2]
+    )
+
+    with col_refresh:
+        if st.button(
+            "Yenile",
+            key="fp_refresh",
+            use_container_width=True,
+        ):
+            _safe_rerun()
+
+    with col_watch:
+        if st.button(
+            "İzleme Listesine Ekle / Güncelle",
+            key="fp_watchlist_add",
+            use_container_width=True,
+        ):
+            _add_or_update_watchlist()
+
+    with col_report:
+        payload = _payload()
+
+        if payload:
+            try:
+                from services.pdf_report_service import (
+                    build_analysis_report_pdf,
+                )
+
+                pdf_bytes = build_analysis_report_pdf(payload)
+
+                st.download_button(
+                    "Rapor İndir",
+                    data=pdf_bytes,
+                    file_name=_build_report_filename(),
+                    mime="application/pdf",
+                    type="primary",
+                    key="fp_download_report",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.button(
+                    "Rapor İndir",
+                    disabled=True,
+                    key="fp_report_error",
+                    use_container_width=True,
+                )
+                st.caption(f"PDF hazırlanamadı: {exc}")
+        else:
+            st.button(
+                "Rapor İndir",
+                disabled=True,
+                key="fp_report_no_analysis",
+                use_container_width=True,
+            )
+
+    with col_ai:
+        if st.button(
+            "AI Analiz Raporu",
+            key="fp_ai_report",
+            use_container_width=True,
+        ):
+            if _payload():
+                st.session_state["show_ai_report_panel"] = True
+                st.success(
+                    "AI analiz raporu hazırlandı."
+                )
+            else:
+                st.warning(
+                    "Önce bir analiz çalıştırılmalı."
+                )
+
+    _render_watchlist_panel()

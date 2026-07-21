@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import time
+import streamlit as st
+
+
+def _fmt_seconds(seconds: float) -> str:
+    seconds = max(float(seconds or 0), 0.0)
+
+    if seconds < 60:
+        return f"{int(seconds)} sn"
+
+    minutes = int(seconds // 60)
+    rest = int(seconds % 60)
+
+    return f"{minutes} dk {rest} sn"
+
+
+class AnalysisProgress:
+    """Streamlit uyumlu gerçek aşama paneli.
+
+    Not:
+    Streamlit uzun blok işlemler çalışırken saniye saniye yeniden çizim yapamaz.
+    Bu yüzden sahte geri sayım göstermiyoruz. Panel yalnızca gerçek aşama
+    geçişlerinde ilerler.
+    """
+
+    def __init__(self) -> None:
+        self.started_at = time.monotonic()
+        self.percent = 0
+        self.current_message = "Analiz başlatılıyor..."
+        self.events: list[str] = []
+
+        self.box = st.empty()
+        self.bar = st.progress(0)
+
+        self.update(3, self.current_message)
+
+    def update(self, percent: int, message: str) -> None:
+        percent = int(max(0, min(100, percent)))
+        message = str(message or "Analiz sürüyor...")
+
+        if message != self.current_message:
+            elapsed = time.monotonic() - self.started_at
+            self.events.append(f"{_fmt_seconds(elapsed)} · {self.current_message}")
+            self.current_message = message
+
+        self.percent = max(self.percent, percent)
+        elapsed_total = time.monotonic() - self.started_at
+
+        with self.box.container(border=True):
+            st.markdown("### Canlı analiz ilerlemesi")
+            st.caption(
+                "Ağır matematiksel hesaplamalar, veri çekme ve AI sentezi nedeniyle "
+                "analiz yaklaşık 1–3 dakika sürebilir. Bu sırada uygulama donmuş gibi "
+                "görünebilir; işlem arka planda devam eder."
+            )
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Toplam geçen süre", _fmt_seconds(elapsed_total))
+
+            with c2:
+                st.metric("Durum", "Çalışıyor")
+
+            with c3:
+                st.metric("İlerleme", f"%{self.percent}")
+
+            st.caption(self.current_message)
+
+            if self.events:
+                with st.expander("Tamamlanan aşamalar", expanded=False):
+                    for item in self.events[-6:]:
+                        st.write(item)
+
+        self.bar.progress(self.percent)
+
+    def close(self) -> None:
+        elapsed_total = time.monotonic() - self.started_at
+
+        with self.box.container(border=True):
+            st.markdown("### Analiz tamamlandı")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Toplam süre", _fmt_seconds(elapsed_total))
+
+            with c2:
+                st.metric("Durum", "Tamamlandı")
+
+            with c3:
+                st.metric("İlerleme", "%100")
+
+            st.caption("Sonuç panelleri hazırlanıyor.")
+
+        self.bar.progress(100)
+        time.sleep(0.35)
+        self.box.empty()
+        self.bar.empty()
+
+    def complete(self) -> None:
+        self.close()
+
+
+def render_analysis_error(exc: Exception) -> None:
+    with st.container(border=True):
+        st.error("Analiz sırasında hata oluştu.")
+        st.caption(str(exc))

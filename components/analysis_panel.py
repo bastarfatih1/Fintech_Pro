@@ -9,6 +9,8 @@ from typing import Any, Mapping, Optional
 
 import pandas as pd
 import streamlit as st
+from components.premium_charts import render_premium_plotly_chart
+from components.premium_ui import render_premium_table
 
 from charts.candlestick import create_price_volume_chart
 from charts.rsi import analyze_rsi
@@ -659,14 +661,11 @@ def _render_professional_summary(
             <div class="fp-subtitle">
                 Model konsensüsü, backtest sonuçları, risk profili ve senaryo aralığı
                 tek ekranda okunabilir bir değerlendirme özetine dönüştürüldü.
-            </div>
             <div class="fp-pill-row">
                 <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("scenario_path", "fp-icon-small")}</span>{horizon}</div>
                 <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("consensus_mesh", "fp-icon-small")}</span>Model Güveni %{confidence:.1f}</div>
                 <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("risk_shield", "fp-icon-small")}</span>Risk: {risk_level}</div>
                 <div class="fp-pill"><span class="fp-pill-with-icon">{icon_html("signal_node", "fp-icon-small")}</span>{badge}</div>
-            </div>
-        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -680,7 +679,6 @@ def _render_professional_summary(
                 <div class="fp-card-label">Güncel Fiyat</div>
                 <div class="fp-card-value">{_format_money(current_display)}</div>
                 <div class="fp-card-delta-neutral">Seçili veri kaynağına göre hesaplandı</div>
-            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -693,7 +691,6 @@ def _render_professional_summary(
                 <div class="fp-card-label">Baz Senaryo · {horizon}</div>
                 <div class="fp-card-value">{_format_money(base_target)}</div>
                 <div class="{delta_class}">{nominal_return:+.2f}% senaryo farkı</div>
-            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -705,7 +702,6 @@ def _render_professional_summary(
                 <div class="fp-card-label">Kalibre Senaryo Aralığı</div>
                 <div class="fp-card-value">{_format_money(lower_target)} - {_format_money(upper_target)}</div>
                 <div class="fp-card-delta-neutral">Bant genişliği: %{band_width:.1f}</div>
-            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -890,7 +886,7 @@ def render_analysis_panel(
             f"Detay: {exc}"
         )
     else:
-        st.plotly_chart(
+        render_premium_plotly_chart(
             price_figure,
             config={
                 "scrollZoom": True,

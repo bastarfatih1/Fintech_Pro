@@ -189,18 +189,12 @@ def render_app_intro() -> None:
                 Yatırımlarınızın geçmişte ne kadar getiri sağladığını ölçün;
                 gelecekte oluşabilecek değer aralıklarını ekonometri, istatistik,
                 matematiksel modelleme ve yapay zekâ destekli senaryo analiziyle hesaplayın.
-            </div>
             <div class="fp-app-intro-note">
                 Sonuçlar kesin fiyat tahmini veya yatırım tavsiyesi değildir.
                 Uygulama, veriyi daha anlaşılır hale getiren analitik bir karar destek ekranıdır.
-            </div>
             <div class="fp-app-intro-pill-row">
-                <div class="fp-app-intro-pill">Geçmiş performans</div>
-                <div class="fp-app-intro-pill">Risk metrikleri</div>
-                <div class="fp-app-intro-pill">Model konsensüsü</div>
-                <div class="fp-app-intro-pill">AI haber sentezi</div>
-            </div>
-        </div>
+                
+
         """,
         unsafe_allow_html=True,
     )

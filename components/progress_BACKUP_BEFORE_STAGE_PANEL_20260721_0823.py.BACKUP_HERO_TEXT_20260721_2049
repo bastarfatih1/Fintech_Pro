@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import time
+import streamlit as st
+
+
+def _fmt_seconds(seconds: float) -> str:
+    seconds = max(float(seconds or 0), 0.0)
+
+    if seconds < 60:
+        return f"{int(seconds)} sn"
+
+    minutes = int(seconds // 60)
+    rest = int(seconds % 60)
+
+    return f"{minutes} dk {rest} sn"
+
+
+class AnalysisProgress:
+    """Analiz sürecini gerçek geçen süreye göre canlı gösterir."""
+
+    def __init__(self) -> None:
+        self.started_at = time.monotonic()
+        self.stage_started_at = self.started_at
+        self.last_message = ""
+        self.percent = 0
+
+        self.box = st.empty()
+        self.bar = st.progress(0)
+
+        self.update(3, "Analiz başlatılıyor...")
+
+    def update(self, percent: int, message: str) -> None:
+        percent = int(max(0, min(100, percent)))
+        message = str(message or "Analiz sürüyor...")
+
+        if message != self.last_message:
+            self.stage_started_at = time.monotonic()
+            self.last_message = message
+
+        self.percent = max(self.percent, percent)
+
+        total_elapsed = time.monotonic() - self.started_at
+        stage_elapsed = time.monotonic() - self.stage_started_at
+
+        with self.box.container(border=True):
+            st.markdown("### Canlı analiz ilerlemesi")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Toplam geçen süre", _fmt_seconds(total_elapsed))
+
+            with c2:
+                st.metric("Bu aşama", _fmt_seconds(stage_elapsed))
+
+            with c3:
+                st.metric("İlerleme", f"%{self.percent}")
+
+            st.caption(message)
+
+        self.bar.progress(self.percent)
+
+    def close(self) -> None:
+        total_elapsed = time.monotonic() - self.started_at
+
+        with self.box.container(border=True):
+            st.markdown("### Analiz tamamlandı")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Toplam süre", _fmt_seconds(total_elapsed))
+
+            with c2:
+                st.metric("Bu aşama", "0 sn")
+
+            with c3:
+                st.metric("İlerleme", "%100")
+
+            st.caption("Sonuç panelleri hazırlanıyor.")
+
+        self.bar.progress(100)
+        time.sleep(0.4)
+        self.box.empty()
+        self.bar.empty()
+
+
+def render_analysis_error(exc: Exception) -> None:
+    with st.container(border=True):
+        st.error("Analiz sırasında hata oluştu.")
+        st.caption(str(exc))
+
+
+# Eski app.py akışı progress.complete() çağırıyor.
+# Yeni progress sınıfında close() vardı; uyumluluk için complete() alias ekliyoruz.
+def _analysis_progress_complete(self):
+    return self.close()
+
+
+AnalysisProgress.complete = _analysis_progress_complete

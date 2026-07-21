@@ -24,9 +24,17 @@ def render_analysis_button() -> bool:
     Returns:
         Analiz aktifse True döndürür.
     """
+    with st.container(border=True):
+        st.markdown("##### Analiz süresi")
+        st.caption(
+            "Bu analiz; piyasa verisi, geçmiş fiyat davranışı, model konsensüsü, "
+            "risk metrikleri ve AI haber sentezi gibi ağır matematiksel hesaplamalar içerir. "
+            "Ortalama 1–3 dk sürebilir."
+        )
+
     clicked = st.button(
         "Analizi Başlat",
-        use_container_width=True,
+        width="stretch",
         type="primary",
     )
 

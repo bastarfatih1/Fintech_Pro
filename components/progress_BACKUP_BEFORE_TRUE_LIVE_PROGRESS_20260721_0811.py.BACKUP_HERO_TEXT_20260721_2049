@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+import time
+import streamlit as st
+
+
+def _fmt_seconds(seconds: float) -> str:
+    seconds = max(float(seconds or 0), 0.0)
+    if seconds < 60:
+        return f"{int(seconds)} sn"
+    minutes = int(seconds // 60)
+    rest = int(seconds % 60)
+    return f"{minutes} dk {rest} sn"
+
+
+class AnalysisProgress:
+    """Analiz sürecini gerçek aşamalara bağlı gösteren native Streamlit paneli."""
+
+    def __init__(self) -> None:
+        self.started_at = time.monotonic()
+        self.percent = 0
+        self.message = "Analiz başlatılıyor..."
+        self.box = st.empty()
+        self.bar = st.progress(0)
+        self.update(3, self.message)
+
+    def _estimate_remaining(self, percent: int) -> str:
+        elapsed = time.monotonic() - self.started_at
+
+        if percent < 8:
+            return "hesaplanıyor"
+
+        ratio = max(min(percent / 100.0, 0.98), 0.01)
+        estimated_total = elapsed / ratio
+        remaining = max(estimated_total - elapsed, 0.0)
+
+        return _fmt_seconds(remaining)
+
+    def update(self, percent: int, message: str) -> None:
+        percent = int(max(0, min(100, percent)))
+
+        # Geriye düşmesin.
+        self.percent = max(self.percent, percent)
+        self.message = str(message or self.message)
+
+        elapsed = time.monotonic() - self.started_at
+        remaining = self._estimate_remaining(self.percent)
+
+        with self.box.container(border=True):
+            st.markdown("### Canlı analiz ilerlemesi")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Geçen süre", _fmt_seconds(elapsed))
+
+            with c2:
+                st.metric("Tahmini kalan", remaining)
+
+            with c3:
+                st.metric("İlerleme", f"%{self.percent}")
+
+            st.caption(self.message)
+
+        self.bar.progress(self.percent)
+
+    def close(self) -> None:
+        elapsed = time.monotonic() - self.started_at
+
+        with self.box.container(border=True):
+            st.markdown("### Analiz tamamlandı")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Toplam süre", _fmt_seconds(elapsed))
+
+            with c2:
+                st.metric("Tahmini kalan", "0 sn")
+
+            with c3:
+                st.metric("İlerleme", "%100")
+
+            st.caption("Sonuç panelleri hazırlanıyor.")
+
+        self.bar.progress(100)
+        time.sleep(0.35)
+        self.box.empty()
+        self.bar.empty()
+
+
+def render_analysis_error(exc: Exception) -> None:
+    with st.container(border=True):
+        st.error("Analiz sırasında hata oluştu.")
+        st.caption(str(exc))

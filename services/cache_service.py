@@ -20,6 +20,7 @@ from core.market_calendar import normalize_asset_type
 from finans_motoru import get_kurlar, get_kurlar_with_metadata
 from haber_motoru import canli_rss_haber_cek
 from services.data_provider import get_market_history
+from services.live_market_provider import apply_live_quote_to_history
 
 
 GRAM_ALTIN_SYMBOL = "GRAM_ALTIN_TRY"
@@ -247,6 +248,13 @@ def _get_gram_gold_history_with_metadata(period: str = "10y") -> dict[str, Any]:
         usdtry_data=usdtry_data,
     )
 
+    gram_data = _apply_gram_altin_manual_override(gram_data)
+    gram_data = apply_live_quote_to_history(
+        data=gram_data,
+        symbol=GRAM_ALTIN_SYMBOL,
+    )
+    gram_data = _sanitize_market_history(gram_data)
+
     if not gram_data.empty:
         return {
             "data": gram_data,
@@ -262,6 +270,12 @@ def _get_gram_gold_history_with_metadata(period: str = "10y") -> dict[str, Any]:
         }
 
     prototype_data = _build_gram_gold_prototype_history(period=period)
+    prototype_data = _apply_gram_altin_manual_override(prototype_data)
+    prototype_data = apply_live_quote_to_history(
+        data=prototype_data,
+        symbol=GRAM_ALTIN_SYMBOL,
+    )
+    prototype_data = _sanitize_market_history(prototype_data)
 
     return {
         "data": prototype_data,
@@ -352,7 +366,11 @@ def get_cached_asset_history(
     if result.is_empty:
         return pd.DataFrame()
 
-    return result.data
+    cleaned_data = apply_live_quote_to_history(
+        data=result.data,
+        symbol=symbol,
+    )
+    return _sanitize_market_history(cleaned_data)
 
 
 @st.cache_data(ttl=3600)
@@ -384,3 +402,217 @@ def get_cached_asset_history_with_metadata(
         "data": result.data,
         "metadata": result.metadata,
     }
+
+
+def _apply_gram_altin_manual_override(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prototip modunda Gram Altın son fiyat ve önceki kapanışı
+    Streamlit secrets üzerinden manuel olarak Matriks değerine sabitler.
+    """
+    try:
+        enabled = str(st.secrets.get("GRAM_ALTIN_OVERRIDE_ENABLED", "false")).lower() == "true"
+        if not enabled or data is None or data.empty:
+            return data
+
+        current_price = float(st.secrets.get("GRAM_ALTIN_CURRENT_PRICE"))
+        previous_close = float(st.secrets.get("GRAM_ALTIN_PREVIOUS_CLOSE"))
+
+        fixed = data.copy()
+
+        if "Close" not in fixed.columns:
+            return data
+
+        # Son satır = güncel Matriks fiyatı
+        last_idx = fixed.index[-1]
+        fixed.loc[last_idx, "Close"] = current_price
+
+        for col in ["Open", "High", "Low"]:
+            if col in fixed.columns:
+                fixed.loc[last_idx, col] = current_price
+
+        # Bir önceki satır = Matriks önceki kapanış
+        if len(fixed) >= 2:
+            prev_idx = fixed.index[-2]
+            fixed.loc[prev_idx, "Close"] = previous_close
+
+            for col in ["Open", "High", "Low"]:
+                if col in fixed.columns:
+                    fixed.loc[prev_idx, col] = previous_close
+
+        return fixed
+
+    except Exception:
+        return data
+
+
+def _sanitize_market_history(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Model motoruna gitmeden önce piyasa verisini temizler.
+    NaN, sonsuz, sıfır veya negatif Close değerleri modelleri bozar.
+    """
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    fixed = data.copy()
+
+    if "Close" not in fixed.columns:
+        return pd.DataFrame()
+
+    numeric_columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    for col in numeric_columns:
+        if col in fixed.columns:
+            fixed[col] = pd.to_numeric(fixed[col], errors="coerce")
+            fixed[col] = fixed[col].replace(
+                [float("inf"), float("-inf")],
+                pd.NA,
+            )
+
+    fixed = fixed.dropna(subset=["Close"])
+    fixed = fixed[fixed["Close"] > 0]
+
+    if fixed.empty:
+        return pd.DataFrame()
+
+    for col in ["Open", "High", "Low"]:
+        if col not in fixed.columns:
+            fixed[col] = fixed["Close"]
+        else:
+            fixed[col] = fixed[col].fillna(fixed["Close"])
+            fixed.loc[fixed[col] <= 0, col] = fixed["Close"]
+
+    if "Volume" not in fixed.columns:
+        fixed["Volume"] = 0.0
+    else:
+        fixed["Volume"] = fixed["Volume"].fillna(0.0)
+
+    fixed = fixed[~fixed.index.duplicated(keep="last")]
+    fixed = fixed.sort_index()
+
+    return fixed
+
+
+# COIN_GOLD_DERIVED_PRICE_PATCH
+# Darphane altınları için ayrı güvenilir ticker yoksa GRAM_ALTIN_TRY üzerinden
+# açık formüllü teorik fiyat üretilir. Bu canlı kuyumcu makası/spread verisi değildir.
+
+def _normalize_coin_symbol(symbol):
+    return (
+        str(symbol or "")
+        .upper()
+        .replace("İ", "I")
+        .replace("Ü", "U")
+        .replace("Ğ", "G")
+        .replace("Ş", "S")
+        .replace("Ö", "O")
+        .replace("Ç", "C")
+    )
+
+
+def _coin_gold_factor(symbol):
+    s = _normalize_coin_symbol(symbol)
+
+    # GRAM_ALTIN_TRY zaten baz üründür, ona dokunma.
+    if s == "GRAM_ALTIN_TRY":
+        return None, None
+
+    # Altın sikke / Cumhuriyet Ata Lira: 7.216 gr, 916.6 milyem.
+    if "CUMHURIYET" in s or "ATA_LIRA" in s or "ATAALTIN" in s:
+        return 7.216 * 0.9166, "Cumhuriyet Altını / Ata Lira teorik Darphane değeri"
+
+    # Ziynet birlik / tam altın: 7.016 gr, 916.6 milyem.
+    if "ZIYNET" in s or "TAM_ALTIN" in s:
+        return 7.016 * 0.9166, "Ziynet Tam Altın teorik Darphane değeri"
+
+    if "YARIM" in s:
+        return 3.508 * 0.9166, "Ziynet Yarım Altın teorik Darphane değeri"
+
+    if "CEYREK" in s:
+        return 1.754 * 0.9166, "Ziynet Çeyrek Altın teorik Darphane değeri"
+
+    return None, None
+
+
+def _derive_coin_gold_history_from_gram(symbol, factor, label):
+    gram_result = _ORIGINAL_GET_CACHED_ASSET_HISTORY_WITH_METADATA("GRAM_ALTIN_TRY")
+
+    if not isinstance(gram_result, dict):
+        raise RuntimeError("GRAM_ALTIN_TRY sonucu beklenen metadata formatında gelmedi.")
+
+    data = gram_result.get("data")
+
+    if data is None or data.empty:
+        raise RuntimeError("Cumhuriyet altını için GRAM_ALTIN_TRY baz verisi alınamadı.")
+
+    derived = data.copy()
+
+    price_columns = [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Adj Close",
+    ]
+
+    import pandas as pd
+
+    for col in price_columns:
+        if col in derived.columns:
+            derived[col] = pd.to_numeric(
+                derived[col],
+                errors="coerce",
+            ) * float(factor)
+
+    metadata = dict(gram_result.get("metadata") or {})
+    metadata["source"] = label
+    metadata["provider"] = "Darphane theoretical derived"
+    metadata["is_derived"] = True
+    metadata["base_symbol"] = "GRAM_ALTIN_TRY"
+    metadata["calculation_note"] = (
+        "Fiyat GRAM_ALTIN_TRY üzerinden ağırlık x milyem oranı ile türetilmiştir. "
+        "Kuyumcu alış/satış makası veya serbest piyasa primi içermez."
+    )
+
+    return {
+        "data": derived,
+        "metadata": metadata,
+    }
+
+
+try:
+    _ORIGINAL_GET_CACHED_ASSET_HISTORY_WITH_METADATA
+except NameError:
+    _ORIGINAL_GET_CACHED_ASSET_HISTORY_WITH_METADATA = get_cached_asset_history_with_metadata
+
+
+def get_cached_asset_history_with_metadata(market_symbol):
+    factor, label = _coin_gold_factor(market_symbol)
+
+    if factor is not None:
+        return _derive_coin_gold_history_from_gram(
+            symbol=market_symbol,
+            factor=factor,
+            label=label,
+        )
+
+    return _ORIGINAL_GET_CACHED_ASSET_HISTORY_WITH_METADATA(market_symbol)
+
+
+try:
+    _ORIGINAL_GET_CACHED_ASSET_HISTORY
+except NameError:
+    _ORIGINAL_GET_CACHED_ASSET_HISTORY = get_cached_asset_history
+
+
+def get_cached_asset_history(market_symbol):
+    factor, label = _coin_gold_factor(market_symbol)
+
+    if factor is not None:
+        result = _derive_coin_gold_history_from_gram(
+            symbol=market_symbol,
+            factor=factor,
+            label=label,
+        )
+        return result["data"]
+
+    return _ORIGINAL_GET_CACHED_ASSET_HISTORY(market_symbol)

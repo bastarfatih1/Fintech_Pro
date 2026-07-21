@@ -1,0 +1,1008 @@
+from __future__ import annotations
+
+from html import escape
+from textwrap import dedent
+from typing import Any, Mapping, Optional
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+
+def _num(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        if value is None:
+            return default
+        numeric = float(value)
+        if pd.isna(numeric):
+            return default
+        return numeric
+    except Exception:
+        return default
+
+
+def _fmt_money(value: Any, symbol: str = "₺", decimals: Optional[int] = None) -> str:
+    numeric = _num(value)
+
+    if numeric is None:
+        return "Veri yok"
+
+    if decimals is None:
+        decimals = 4 if abs(numeric) < 100 else 2
+
+    text = f"{numeric:,.{decimals}f}"
+    text = text.replace(",", "X").replace(".", ",").replace("X", ".")
+
+    return f"{text} {symbol}"
+
+
+def _fmt_plain_money(value: Any, symbol: str = "₺") -> str:
+    return _fmt_money(value, symbol, decimals=2)
+
+
+def _fmt_percent(value: Any) -> str:
+    numeric = _num(value)
+
+    if numeric is None:
+        return "Veri yok"
+
+    sign = "+" if numeric > 0 else "-" if numeric < 0 else ""
+    text = f"{abs(numeric):.2f}".replace(".", ",")
+
+    return f"{sign}%{text}"
+
+
+def _badge_class(value: Any) -> str:
+    numeric = _num(value, 0.0) or 0.0
+
+    if numeric > 0:
+        return "fp-first-badge-pos"
+
+    if numeric < 0:
+        return "fp-first-badge-neg"
+
+    return "fp-first-badge-flat"
+
+
+def _badge_arrow(value: Any) -> str:
+    numeric = _num(value, 0.0) or 0.0
+
+    if numeric > 0:
+        return "↑"
+
+    if numeric < 0:
+        return "↓"
+
+    return "→"
+
+
+def _safe_df(value: Any) -> pd.DataFrame:
+    try:
+        if isinstance(value, pd.DataFrame):
+            return value.copy()
+
+        if isinstance(value, (list, tuple, dict)):
+            return pd.DataFrame(value).copy()
+
+    except Exception:
+        pass
+
+    return pd.DataFrame()
+
+
+def _future_df(forecast_data: Mapping[str, Any]) -> pd.DataFrame:
+    if not isinstance(forecast_data, Mapping):
+        return pd.DataFrame()
+
+    keys = [
+        "gelecek_df",
+        "gelecek_tablo_df",
+        "gelecek_tablo",
+        "future_table",
+        "future_scenarios",
+        "senaryo_tablosu",
+    ]
+
+    for key in keys:
+        df = _safe_df(forecast_data.get(key))
+
+        if not df.empty and "Vade" in df.columns:
+            return df
+
+    for value in forecast_data.values():
+        df = _safe_df(value)
+
+        if not df.empty and "Vade" in df.columns:
+            return df
+
+    return pd.DataFrame()
+
+
+def _pick_future_row(
+    forecast_data: Mapping[str, Any],
+    selected_horizon: Optional[str],
+) -> dict[str, Any]:
+    df = _future_df(forecast_data)
+
+    if df.empty:
+        return {}
+
+    candidates = []
+
+    if selected_horizon:
+        candidates.append(str(selected_horizon).strip())
+
+    candidates.extend(
+        [
+            "1 Yıl",
+            "6 Ay",
+            "3 Ay",
+            "1 Ay",
+            "1 Hafta",
+            "1 İşlem Günü",
+        ]
+    )
+
+    if "Vade" in df.columns:
+        normalized = df["Vade"].astype(str).str.strip().str.casefold()
+
+        for label in candidates:
+            matched = df[normalized == label.strip().casefold()]
+
+            if not matched.empty:
+                return matched.iloc[0].to_dict()
+
+    return df.iloc[-1].to_dict()
+
+
+def _model_count(row: Mapping[str, Any], forecast_data: Mapping[str, Any]) -> int | str:
+    direct = _num(row.get("Konsensüs Model Sayısı", row.get("Model Sayısı")))
+
+    if direct is not None:
+        return int(direct)
+
+    weights = forecast_data.get("model_agirliklari") if isinstance(forecast_data, Mapping) else None
+
+    if isinstance(weights, dict):
+        return len(
+            [
+                value
+                for value in weights.values()
+                if (_num(value, 0.0) or 0.0) > 0
+            ]
+        )
+
+    return "—"
+
+
+def _history_close_series(data: pd.DataFrame) -> pd.Series:
+    if data is None or data.empty or "Close" not in data.columns:
+        return pd.Series(dtype="float64")
+
+    return pd.to_numeric(data["Close"], errors="coerce").dropna()
+
+
+def _days_from_label(label: Optional[str], fallback: Optional[int] = None) -> int:
+    if fallback and fallback > 0:
+        return int(fallback)
+
+    text = str(label or "").strip().casefold()
+
+    if "hafta" in text:
+        return 5
+
+    if "1 ay" in text:
+        return 21
+
+    if "3 ay" in text:
+        return 63
+
+    if "6 ay" in text:
+        return 126
+
+    if "1 yıl" in text or "1 yil" in text:
+        return 252
+
+    if "3 yıl" in text or "3 yil" in text:
+        return 756
+
+    if "5 yıl" in text or "5 yil" in text:
+        return 1260
+
+    return 252
+
+
+def _past_snapshot(
+    data: pd.DataFrame,
+    current_price: float,
+    investment_amount: float,
+    currency_rate: float,
+    selected_horizon: Optional[str],
+    forecast_days: Optional[int],
+) -> dict[str, Any]:
+    close = _history_close_series(data)
+    current_native = _num(current_price)
+    invested = _num(investment_amount, 0.0) or 0.0
+    rate = _num(currency_rate, 1.0) or 1.0
+    days = _days_from_label(selected_horizon, forecast_days)
+
+    result = {
+        "days": days,
+        "past_price_display": None,
+        "historical_return_percent": None,
+        "same_position_past_value": None,
+        "past_investment_today_value": None,
+    }
+
+    if current_native is None or current_native <= 0 or close.empty or len(close) <= days:
+        return result
+
+    past_native = _num(close.iloc[-(days + 1)])
+
+    if past_native is None or past_native <= 0:
+        return result
+
+    result["past_price_display"] = past_native * rate
+    result["historical_return_percent"] = ((current_native / past_native) - 1.0) * 100.0
+
+    if invested > 0:
+        result["same_position_past_value"] = invested * past_native / current_native
+        result["past_investment_today_value"] = invested * current_native / past_native
+
+    return result
+
+
+def _past_return_rows(
+    data: pd.DataFrame,
+    current_price: float,
+    investment_amount: float,
+    currency_rate: float,
+    currency_symbol: str,
+) -> list[dict[str, str]]:
+    close = _history_close_series(data)
+    current_native = _num(current_price)
+    invested = _num(investment_amount, 0.0) or 0.0
+    rate = _num(currency_rate, 1.0) or 1.0
+
+    if current_native is None or current_native <= 0 or close.empty:
+        return []
+
+    rows = []
+
+    periods = [
+        ("1 Hafta", 5),
+        ("1 Ay", 21),
+        ("3 Ay", 63),
+        ("6 Ay", 126),
+        ("1 Yıl", 252),
+    ]
+
+    for label, days in periods:
+        if len(close) <= days:
+            continue
+
+        old_native = _num(close.iloc[-(days + 1)])
+
+        if old_native is None or old_native <= 0:
+            continue
+
+        return_percent = ((current_native / old_native) - 1.0) * 100.0
+        today_value = invested * current_native / old_native if invested > 0 else None
+
+        rows.append(
+            {
+                "Vade": label,
+                "Geçmiş Fiyat": _fmt_money(old_native * rate, currency_symbol),
+                "Bugünkü Karşılığı": _fmt_plain_money(today_value, currency_symbol),
+                "Getiri %": _fmt_percent(return_percent),
+                "tone": "positive"
+                if return_percent > 0
+                else "negative"
+                if return_percent < 0
+                else "flat",
+            }
+        )
+
+    return rows
+
+
+def _render_history_table(rows: list[dict[str, str]]) -> None:
+    if not rows:
+        st.info("Geçmiş getiri özeti için yeterli veri bulunamadı.")
+        return
+
+    body = []
+
+    for row in rows:
+        tone_class = f"fp-first-ret-{row.get('tone', 'flat')}"
+
+        body.append(
+            f"""
+            <tr>
+                <td>{escape(row["Vade"])}</td>
+                <td>{escape(row["Geçmiş Fiyat"])}</td>
+                <td>{escape(row["Bugünkü Karşılığı"])}</td>
+                <td class="{tone_class}">{escape(row["Getiri %"])}</td>
+            </tr>
+            """
+        )
+
+    html = f"""
+    <div class="fp-first-table-card">
+        <div class="fp-first-section-title compact">Geçmiş getiri özeti</div>
+        <table class="fp-first-table">
+            <thead>
+                <tr>
+                    <th>Vade</th>
+                    <th>Geçmiş Fiyat</th>
+                    <th>Bugünkü Karşılığı</th>
+                    <th>Getiri %</th>
+                </tr>
+            </thead>
+            <tbody>{''.join(body)}</tbody>
+        </table>
+    </div>
+    """
+
+    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
+
+
+def _inject_style() -> None:
+    st.markdown(
+        dedent(
+            """
+            <style>
+            .fp-first-info {
+                display: flex;
+                align-items: flex-start;
+                gap: 14px;
+                padding: 16px 18px;
+                border-radius: 18px;
+                border: 1px solid rgba(56,189,248,.34);
+                background: linear-gradient(135deg, rgba(2,6,23,.96), rgba(15,23,42,.90));
+                box-shadow: 0 16px 38px rgba(2,6,23,.26);
+                margin-bottom: 16px;
+            }
+
+            .fp-first-info-icon {
+                width: 34px;
+                height: 34px;
+                border-radius: 999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 1px solid rgba(14,165,233,.85);
+                color: #38bdf8;
+                font-weight: 950;
+                font-size: 18px;
+                flex: 0 0 auto;
+            }
+
+            .fp-first-info-title {
+                color: #f8fafc;
+                font-weight: 950;
+                font-size: 1rem;
+                margin-bottom: 4px;
+            }
+
+            .fp-first-info-text {
+                color: #cbd5e1;
+                font-size: .90rem;
+                line-height: 1.45;
+            }
+
+            .fp-first-grid-4,
+            .fp-first-grid-invest {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 12px;
+                margin: 10px 0 16px 0;
+            }
+
+            .fp-first-card {
+                position: relative;
+                min-height: 110px;
+                padding: 16px 18px;
+                border-radius: 18px;
+                border: 1px solid rgba(56,189,248,.24);
+                background:
+                    radial-gradient(circle at 90% 16%, rgba(37,99,235,.22), transparent 31%),
+                    linear-gradient(135deg, rgba(15,23,42,.96), rgba(2,6,23,.95));
+                box-shadow: 0 14px 34px rgba(2,6,23,.24);
+                overflow: hidden;
+            }
+
+            .fp-first-card-label {
+                color: #cbd5e1;
+                font-size: .86rem;
+                font-weight: 750;
+                margin-bottom: 10px;
+            }
+
+            .fp-first-card-value {
+                color: #f8fafc;
+                font-size: 1.55rem;
+                font-weight: 950;
+                letter-spacing: -.03em;
+                line-height: 1.12;
+            }
+
+            .fp-first-card-sub {
+                color: #94a3b8;
+                font-size: .82rem;
+                margin-top: 7px;
+            }
+
+            .fp-first-icon {
+                position: absolute;
+                right: 16px;
+                top: 24px;
+                width: 58px;
+                height: 58px;
+                border-radius: 999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #38bdf8;
+                font-weight: 950;
+                font-size: 1.5rem;
+                border: 1px solid rgba(37,99,235,.55);
+                background: rgba(30,64,175,.20);
+            }
+
+            .fp-first-icon.green {
+                color: #22c55e;
+                border-color: rgba(34,197,94,.55);
+                background: rgba(21,128,61,.16);
+            }
+
+            .fp-first-section-title {
+                color: #f8fafc;
+                font-size: 1.17rem;
+                font-weight: 950;
+                margin: 16px 0 8px 0;
+            }
+
+            .fp-first-section-title.compact {
+                margin: 0 0 10px 0;
+            }
+
+            .fp-first-note-strip {
+                padding: 9px 12px;
+                border-radius: 10px;
+                border: 1px solid rgba(56,189,248,.26);
+                background: rgba(15,23,42,.72);
+                color: #cbd5e1;
+                font-size: .86rem;
+                margin-top: -8px;
+                margin-bottom: 14px;
+            }
+
+            .fp-first-note-strip strong {
+                color: #38bdf8;
+            }
+
+            .fp-first-scenario-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 12px;
+            }
+
+            .fp-first-scenario {
+                min-height: 142px;
+                text-align: center;
+                padding: 18px 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(148,163,184,.20);
+                background: linear-gradient(135deg, rgba(15,23,42,.98), rgba(2,6,23,.96));
+            }
+
+            .fp-first-scenario.base {
+                border-color: rgba(59,130,246,.80);
+                box-shadow:
+                    0 0 0 1px rgba(59,130,246,.20),
+                    0 0 30px rgba(37,99,235,.22);
+            }
+
+            .fp-first-scenario-label {
+                color: #cbd5e1;
+                font-size: .86rem;
+                font-weight: 750;
+                margin-bottom: 14px;
+            }
+
+            .fp-first-scenario-value {
+                color: #f8fafc;
+                font-size: 1.50rem;
+                font-weight: 950;
+                margin-bottom: 13px;
+            }
+
+            .fp-first-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 7px 11px;
+                border-radius: 9px;
+                font-weight: 900;
+                font-size: .84rem;
+                border: 1px solid transparent;
+            }
+
+            .fp-first-badge-pos {
+                color: #22c55e;
+                border-color: rgba(34,197,94,.38);
+                background: rgba(22,101,52,.24);
+            }
+
+            .fp-first-badge-neg {
+                color: #f87171;
+                border-color: rgba(248,113,113,.38);
+                background: rgba(127,29,29,.24);
+            }
+
+            .fp-first-badge-flat {
+                color: #fde68a;
+                border-color: rgba(250,204,21,.34);
+                background: rgba(113,63,18,.22);
+            }
+
+            .fp-first-table-card {
+                padding: 14px 16px;
+                border-radius: 16px;
+                border: 1px solid rgba(56,189,248,.22);
+                background: linear-gradient(135deg, rgba(15,23,42,.94), rgba(2,6,23,.94));
+                box-shadow: 0 14px 34px rgba(2,6,23,.20);
+                min-height: 100%;
+            }
+
+            .fp-first-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: .86rem;
+                color: #e2e8f0;
+            }
+
+            .fp-first-table th {
+                padding: 8px 9px;
+                text-align: left;
+                color: #cbd5e1;
+                font-weight: 900;
+                background: rgba(30,64,175,.30);
+                border-bottom: 1px solid rgba(56,189,248,.22);
+            }
+
+            .fp-first-table td {
+                padding: 8px 9px;
+                border-bottom: 1px solid rgba(148,163,184,.13);
+            }
+
+            .fp-first-ret-positive {
+                color: #22c55e !important;
+                font-weight: 900;
+            }
+
+            .fp-first-ret-negative {
+                color: #f87171 !important;
+                font-weight: 900;
+            }
+
+            .fp-first-ret-flat {
+                color: #fde68a !important;
+                font-weight: 900;
+            }
+
+            .fp-first-chart-card {
+                margin-top: 14px;
+                padding: 16px 18px;
+                border-radius: 18px;
+                border: 1px solid rgba(56,189,248,.24);
+                background: linear-gradient(135deg, rgba(15,23,42,.96), rgba(2,6,23,.97));
+                box-shadow: 0 16px 40px rgba(2,6,23,.25);
+            }
+
+            .fp-first-chart-title {
+                color: #f8fafc;
+                font-size: 1.20rem;
+                font-weight: 950;
+                margin-bottom: 2px;
+            }
+
+            .fp-first-chart-sub {
+                color: #94a3b8;
+                font-size: .86rem;
+                margin-bottom: 8px;
+            }
+
+            @media (max-width: 1000px) {
+                .fp-first-grid-4,
+                .fp-first-grid-invest {
+                    grid-template-columns: 1fr 1fr;
+                }
+
+                .fp-first-scenario-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            @media (max-width: 680px) {
+                .fp-first-grid-4,
+                .fp-first-grid-invest {
+                    grid-template-columns: 1fr;
+                }
+            }
+            </style>
+            """
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _metric_card(label: str, value: str, sub: str = "", icon: str = "", green: bool = False) -> str:
+    icon_class = "fp-first-icon green" if green else "fp-first-icon"
+
+    return f"""
+    <div class="fp-first-card">
+        <div class="fp-first-card-label">{escape(label)}</div>
+        <div class="fp-first-card-value">{escape(value)}</div>
+        <div class="fp-first-card-sub">{escape(sub)}</div>
+        <div class="{icon_class}">{escape(icon)}</div>
+    </div>
+    """
+
+
+def _scenario_card(label: str, value: str, pct: Any, base: bool = False) -> str:
+    cls = "fp-first-scenario base" if base else "fp-first-scenario"
+
+    return f"""
+    <div class="{cls}">
+        <div class="fp-first-scenario-label">{escape(label)}</div>
+        <div class="fp-first-scenario-value">{escape(value)}</div>
+        <div class="fp-first-badge {_badge_class(pct)}">
+            <span>{_badge_arrow(pct)}</span>
+            <span>{escape(_fmt_percent(pct))}</span>
+        </div>
+    </div>
+    """
+
+
+def _consensus_chart(
+    data: pd.DataFrame,
+    current_price: float,
+    currency_rate: float,
+    forecast_data: Mapping[str, Any],
+    forecast_days: Optional[int],
+    currency_symbol: str,
+) -> Optional[go.Figure]:
+    close = _history_close_series(data)
+
+    if close.empty:
+        return None
+
+    rate = _num(currency_rate, 1.0) or 1.0
+    current_display = (_num(current_price) or float(close.iloc[-1])) * rate
+
+    history = (close.iloc[-252:] * rate).astype(float)
+    dates = list(history.index)
+    values = list(history.values)
+
+    route = None
+
+    if isinstance(forecast_data, Mapping):
+        for key in ["konsensus_rota", "consensus_path"]:
+            value = forecast_data.get(key)
+
+            if value is None:
+                continue
+
+            try:
+                arr = np.asarray(value, dtype=float).flatten()
+
+                if arr.size > 0:
+                    route = arr
+                    break
+
+            except Exception:
+                pass
+
+    if route is not None and route.size > 0:
+        max_days = int(forecast_days or min(len(route), 252))
+        max_days = max(1, min(max_days, len(route)))
+        last_date = pd.Timestamp(dates[-1]) if dates else pd.Timestamp.today()
+        future_dates = pd.bdate_range(last_date, periods=max_days + 1)[1:]
+
+        dates.extend(list(future_dates))
+        values.extend(list(route[:max_days]))
+
+    if not dates or not values:
+        return None
+
+    y = np.asarray(values, dtype=float)
+    x = pd.to_datetime(dates)
+    baseline = np.full_like(y, current_display, dtype=float)
+    above = np.where(y >= current_display, y, np.nan)
+    below = np.where(y < current_display, y, np.nan)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=baseline,
+            mode="lines",
+            line=dict(
+                color="rgba(226,232,240,0.55)",
+                width=1,
+                dash="dash",
+            ),
+            name=f"Güncel Fiyat ({_fmt_money(current_display, currency_symbol)})",
+            hoverinfo="skip",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=above,
+            mode="lines",
+            line=dict(color="#22c55e", width=2.2),
+            fill="tonexty",
+            fillcolor="rgba(34,197,94,0.22)",
+            name="Konsensüs > Güncel Fiyat",
+            connectgaps=False,
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=below,
+            mode="lines",
+            line=dict(color="#ef4444", width=2.2),
+            fill="tonexty",
+            fillcolor="rgba(239,68,68,0.20)",
+            name="Konsensüs < Güncel Fiyat",
+            connectgaps=False,
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=y,
+            mode="lines",
+            line=dict(color="rgba(226,232,240,0.20)", width=1),
+            name="Fiyat / Konsensüs Yolu",
+            hovertemplate="%{x|%d.%m.%Y}<br>%{y:.2f}<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    fig.update_layout(
+        height=360,
+        margin=dict(l=10, r=18, t=12, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(2,6,23,0.72)",
+        font=dict(
+            color="#cbd5e1",
+            family="Inter, Arial, sans-serif",
+        ),
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        xaxis=dict(
+            showgrid=True,
+            gridcolor="rgba(148,163,184,0.12)",
+            zeroline=False,
+            rangeslider=dict(visible=False),
+            rangeselector=dict(
+                buttons=[
+                    dict(count=1, label="1A", step="month", stepmode="backward"),
+                    dict(count=3, label="3A", step="month", stepmode="backward"),
+                    dict(count=6, label="6A", step="month", stepmode="backward"),
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=2, label="2Y", step="year", stepmode="backward"),
+                    dict(step="all", label="Tümü"),
+                ],
+                bgcolor="rgba(15,23,42,0.85)",
+                activecolor="#2563eb",
+                font=dict(
+                    color="#e2e8f0",
+                    size=11,
+                ),
+            ),
+        ),
+        yaxis=dict(
+            side="right",
+            showgrid=True,
+            gridcolor="rgba(148,163,184,0.12)",
+            zeroline=False,
+            tickformat=".2f",
+        ),
+    )
+
+    return fig
+
+
+def render_first_overview_panel(
+    data: pd.DataFrame,
+    asset_name: str,
+    market_symbol: str,
+    current_price: float,
+    investment_amount: float,
+    currency_rate: float,
+    currency_symbol: str,
+    forecast_data: Mapping[str, Any],
+    selected_horizon: Optional[str] = None,
+    forecast_days: Optional[int] = None,
+) -> None:
+    _inject_style()
+
+    row = _pick_future_row(forecast_data, selected_horizon)
+    horizon = str(row.get("Vade") or selected_horizon or "Seçili vade")
+
+    rate = _num(currency_rate, 1.0) or 1.0
+    invested = _num(investment_amount, 0.0) or 0.0
+    current_display = (_num(current_price, 0.0) or 0.0) * rate
+
+    base_price = _num(row.get("Baz Senaryo", row.get("Tahmin")), current_display) or current_display
+    bad_price = _num(row.get("Kötümser Senaryo"), base_price) or base_price
+    good_price = _num(row.get("İyimser Senaryo"), base_price) or base_price
+
+    base_return = _num(
+        row.get("Nominal Getiri %"),
+        ((base_price / current_display) - 1.0) * 100.0 if current_display > 0 else 0.0,
+    ) or 0.0
+
+    bad_return = _num(
+        row.get("Kötümser Getiri %"),
+        ((bad_price / current_display) - 1.0) * 100.0 if current_display > 0 else 0.0,
+    ) or 0.0
+
+    good_return = _num(
+        row.get("İyimser Getiri %"),
+        ((good_price / current_display) - 1.0) * 100.0 if current_display > 0 else 0.0,
+    ) or 0.0
+
+    bad_capital = _num(
+        row.get("Kötümser Sermaye"),
+        invested * (1.0 + bad_return / 100.0) if invested else None,
+    )
+
+    base_capital = _num(
+        row.get("Sermaye Karşılığı"),
+        invested * (1.0 + base_return / 100.0) if invested else None,
+    )
+
+    good_capital = _num(
+        row.get("İyimser Sermaye"),
+        invested * (1.0 + good_return / 100.0) if invested else None,
+    )
+
+    snapshot = _past_snapshot(
+        data=data,
+        current_price=current_price,
+        investment_amount=investment_amount,
+        currency_rate=currency_rate,
+        selected_horizon=horizon,
+        forecast_days=forecast_days,
+    )
+
+    past_price = snapshot.get("past_price_display")
+    historical_return = snapshot.get("historical_return_percent")
+    same_position_past_value = snapshot.get("same_position_past_value")
+    past_investment_today_value = snapshot.get("past_investment_today_value")
+    model_count = _model_count(row, forecast_data)
+
+    info_html = f"""
+    <div class="fp-first-info">
+        <div class="fp-first-info-icon">i</div>
+        <div>
+            <div class="fp-first-info-title">Bu bölüm ne gösteriyor?</div>
+            <div class="fp-first-info-text">
+                Bu bölüm seçili varlık için güncel fiyatı, seçilen baz senaryoyu ve kısa gelecek özetini gösterir.<br>
+                Ayrıca yatırımınızın {escape(horizon)} önceki duruma göre bugünkü değerini ve model konsensüsünü özetler.
+            </div>
+        </div>
+    </div>
+    """
+
+    st.markdown(dedent(info_html).strip(), unsafe_allow_html=True)
+
+    top_cards = f"""
+    <div class="fp-first-grid-4">
+        {_metric_card("Güncel Fiyat", _fmt_money(current_display, currency_symbol), market_symbol, "$")}
+        {_metric_card("Baz Senaryo", _fmt_money(base_price, currency_symbol), f"{horizon} hedef", "⌖")}
+        {_metric_card("Olası Getiri", _fmt_percent(base_return), f"{horizon} potansiyel", "↗")}
+        {_metric_card("Konsensüse Giren Model", str(model_count), "Aktif model", "▱")}
+    </div>
+    """
+
+    st.markdown(dedent(top_cards).strip(), unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="fp-first-section-title">Mevcut yatırım ve geçmiş karşılaştırması</div>',
+        unsafe_allow_html=True,
+    )
+
+    invest_cards = f"""
+    <div class="fp-first-grid-invest">
+        {_metric_card("Yatırılan Sermaye", _fmt_plain_money(invested, currency_symbol), "", "▣", True)}
+        {_metric_card("Güncel Varlık Fiyatı", _fmt_money(current_display, currency_symbol), "", "↗", True)}
+        {_metric_card(f"{horizon} Önceki Fiyat", _fmt_money(past_price, currency_symbol), "", "◷", True)}
+        {_metric_card("Geçmiş Getiri", _fmt_percent(historical_return), "", "↗", True)}
+    </div>
+    <div class="fp-first-note-strip">
+        Bugünkü <strong>{escape(_fmt_plain_money(invested, currency_symbol))}</strong> değerindeki aynı pozisyon,
+        {escape(horizon)} önce yaklaşık <strong>{escape(_fmt_plain_money(same_position_past_value, currency_symbol))}</strong> değerindeydi.
+        O tarihte <strong>{escape(_fmt_plain_money(invested, currency_symbol))}</strong> yatırılsaydı bugünkü yaklaşık değeri
+        <strong>{escape(_fmt_plain_money(past_investment_today_value, currency_symbol))}</strong> olurdu.
+    </div>
+    """
+
+    st.markdown(dedent(invest_cards).strip(), unsafe_allow_html=True)
+
+    col_scenario, col_history = st.columns([1, 1.05])
+
+    with col_scenario:
+        scenario_html = f"""
+        <div>
+            <div class="fp-first-section-title">{escape(horizon)} gelecek yatırım tahmini</div>
+            <div class="fp-first-scenario-grid">
+                {_scenario_card("Kötümser Senaryo", _fmt_plain_money(bad_capital, currency_symbol), bad_return)}
+                {_scenario_card("Baz Konsensüs Tahmini", _fmt_plain_money(base_capital, currency_symbol), base_return, base=True)}
+                {_scenario_card("İyimser Senaryo", _fmt_plain_money(good_capital, currency_symbol), good_return)}
+            </div>
+        </div>
+        """
+
+        st.markdown(dedent(scenario_html).strip(), unsafe_allow_html=True)
+
+    with col_history:
+        _render_history_table(
+            _past_return_rows(
+                data=data,
+                current_price=current_price,
+                investment_amount=investment_amount,
+                currency_rate=currency_rate,
+                currency_symbol=currency_symbol,
+            )
+        )
+
+    chart_head = """
+    <div class="fp-first-chart-card">
+        <div class="fp-first-chart-title">Konsensüs Grafiği</div>
+        <div class="fp-first-chart-sub">Modellerin ortak tahmin görünümü</div>
+    """
+
+    st.markdown(dedent(chart_head).strip(), unsafe_allow_html=True)
+
+    fig = _consensus_chart(
+        data=data,
+        current_price=current_price,
+        currency_rate=currency_rate,
+        forecast_data=forecast_data,
+        forecast_days=forecast_days,
+        currency_symbol=currency_symbol,
+    )
+
+    if fig is None:
+        st.info("Konsensüs grafiği için yeterli veri bulunamadı.")
+    else:
+        try:
+            from components.premium_charts import render_premium_plotly_chart
+
+            render_premium_plotly_chart(fig, use_container_width=True)
+
+        except Exception:
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)

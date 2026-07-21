@@ -1,0 +1,105 @@
+"""
+Alt işlem menüsü bileşenleri.
+
+Önceki sürüm HTML button kullanıyordu; HTML button Streamlit Python
+aksiyonlarını tetiklemediği için butonlar çalışmıyordu. Bu sürüm gerçek
+Streamlit butonları ve download_button kullanır.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import streamlit as st
+
+
+def _safe_rerun() -> None:
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+
+def _build_report_filename() -> str:
+    payload = st.session_state.get("last_analysis_payload", {}) or {}
+    symbol = str(payload.get("market_symbol", "analysis")).replace("/", "-").replace("=", "")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    return f"fintech_alpha_pro_{symbol}_{stamp}.pdf"
+
+
+def render_action_footer() -> None:
+    """Alt işlem menüsünü gerçek çalışan Streamlit kontrolleriyle gösterir."""
+    st.markdown(
+        """
+        <style>
+        .fp-action-shell {
+            position: sticky;
+            bottom: 0;
+            z-index: 50;
+            padding: 10px 12px;
+            margin-top: 22px;
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(2, 6, 23, 0.96), rgba(15, 23, 42, 0.92));
+            box-shadow: 0 -12px 34px rgba(2, 6, 23, 0.35);
+        }
+        </style>
+        <div class="fp-action-shell">
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_refresh, col_watch, col_report, col_ai = st.columns([1, 1.15, 1.15, 1.2])
+
+    with col_refresh:
+        if st.button("Yenile", use_container_width=True):
+            _safe_rerun()
+
+    with col_watch:
+        if st.button("İzleme Listesi", use_container_width=True):
+            payload = st.session_state.get("last_analysis_payload", {}) or {}
+            item = {
+                "asset_name": payload.get("asset_name", "Seçili varlık yok"),
+                "market_symbol": payload.get("market_symbol", "-"),
+                "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            watchlist = list(st.session_state.get("watchlist", []))
+            if item["market_symbol"] != "-" and item["market_symbol"] not in [x.get("market_symbol") for x in watchlist]:
+                watchlist.append(item)
+                st.session_state["watchlist"] = watchlist
+                st.success("Varlık izleme listesine eklendi.")
+            else:
+                st.info("Bu varlık zaten izleme listesinde veya henüz analiz yok.")
+
+    with col_report:
+        payload = st.session_state.get("last_analysis_payload")
+        if payload:
+            try:
+                from services.pdf_report_service import build_analysis_report_pdf
+
+                pdf_bytes = build_analysis_report_pdf(payload)
+                st.download_button(
+                    "Rapor İndir",
+                    data=pdf_bytes,
+                    file_name=_build_report_filename(),
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.button("Rapor İndir", disabled=True, use_container_width=True)
+                st.caption(f"PDF servisi hazır değil: {exc}")
+        else:
+            st.button("Rapor İndir", disabled=True, use_container_width=True)
+
+    with col_ai:
+        if st.button("AI Analiz Raporu", type="primary", use_container_width=True):
+            if st.session_state.get("last_analysis_payload"):
+                st.session_state["show_ai_report_panel"] = True
+                st.success("AI rapor özeti hazır. Analiz Sonuçları ve AI Haberler sekmesini kontrol et.")
+            else:
+                st.warning("Önce bir analiz çalıştırılmalı.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
